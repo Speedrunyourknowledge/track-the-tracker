@@ -1,0 +1,19 @@
+{
+  "name": "track-the-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wxt",
+    "zip": "wxt zip",
+    "check": "wxt prepare && tsc --noEmit",
+    "lint": "eslint",
+    "check:all": "npm run check && npm run lint"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "eslint": "^9",
+    "typescript": "^5",
+    "typescript-eslint": "^8.57.2",
+    "wxt": "^0.19.0"
+  }
+}
