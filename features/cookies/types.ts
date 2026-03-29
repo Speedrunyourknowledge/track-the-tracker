@@ -51,11 +51,16 @@ export interface CookieInfo {
    * i.e. it was placed by a third party (tracker, ad network, analytics, etc.).
    */
   isThirdParty: boolean;
+
+  /**
+   * True when the cookie is a known harmless security/anti-abuse token
+   * (e.g. Google AEC, __Secure-YEC). Still third-party, but not a tracker.
+   */
+  isSecurityCookie: boolean;
 }
 
 /**
- * Raw result from queryCookiesForUrl — just the cookies and timestamp,
- * without the snapshot diff fields that the background adds.
+ * Raw result from queryCookiesForUrl — the cookies and timestamp.
  */
 export interface CookieQueryResult {
   cookies: CookieInfo[];
@@ -69,8 +74,7 @@ export interface GetCookiesMessage {
   url: string;
   /**
    * The Chrome tab ID of the active tab.
-   * Used to look up that tab's page-load snapshot so we can compute a diff
-   * and show which cookies are new since the page loaded.
+   * Used to look up that tab's observed third-party origins.
    */
   tabId: number;
 }
@@ -79,23 +83,6 @@ export interface GetCookiesMessage {
 export interface GetCookiesResponse {
   /** All cookies currently in the jar for this URL. */
   cookies: CookieInfo[];
-  /**
-   * Cookies that did NOT exist when the page first loaded.
-   * These are the cookies most likely set by an "Allow cookies" banner click,
-   * a login flow, or any other post-load interaction.
-   */
-  newSinceLoad: CookieInfo[];
-  /**
-   * Cookies that existed at page load but whose value has changed since.
-   * e.g. a session token that was rotated after login.
-   */
-  changedSinceLoad: CookieInfo[];
   /** ISO timestamp of when the query ran. */
   queriedAt: string;
-  /**
-   * ISO timestamp of when the page-load snapshot was taken.
-   * null if no snapshot exists yet for this tab (e.g. the tab was already
-   * open before the extension was installed or last restarted).
-   */
-  snapshotTakenAt: string | null;
 }
