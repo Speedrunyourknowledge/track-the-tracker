@@ -84,9 +84,7 @@ function cookieListHtml(cookies: CookieInfo[]): string {
     .map((c) => {
       const name = escapeHtml(c.name);
       const domain = escapeHtml(c.domain);
-      const borderStyle = c.isSecurityCookie
-        ? "border:1px solid #fbbf24;"
-        : "border:1px solid #ddd;";
+      const borderStyle = "border:1px solid #ddd;";
       // If the domain name is long, put it on its own line so the cookie name
       // gets a full line beneath it.
       const nameAndDomain = domain.length > 20
