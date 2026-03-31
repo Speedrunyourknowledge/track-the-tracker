@@ -1,22 +1,10 @@
-# dependencies
+# Dependencies
 node_modules/
 
-# wxt build outputs
-.output/
-.wxt/
-
-# zip artifacts
-*.zip
-
-# misc
-.DS_Store
-*.pem
-
-# debug logs
-npm-debug.log*
-
-# env files
+# Environment
 .env
 
-# typescript
-*.tsbuildinfo
+# wxt outputs
+.output/
+.wxt/*
+!.wxt/tsconfig.json

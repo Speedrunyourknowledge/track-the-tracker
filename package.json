@@ -5,9 +5,8 @@
   "scripts": {
     "dev": "wxt",
     "zip": "wxt zip",
-    "check": "wxt prepare && tsc --noEmit",
     "lint": "eslint",
-    "check:all": "npm run check && npm run lint"
+    "postinstall": "wxt prepare"
   },
   "devDependencies": {
     "@types/node": "^20",

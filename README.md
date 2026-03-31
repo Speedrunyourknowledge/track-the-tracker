@@ -40,14 +40,14 @@ wxt.config.ts           # Extension manifest & permissions
 # Install dependencies
 npm install
 
-# Type check and lint check
-npm run check:all
-
 # Run in development mode
 npm run dev
 
 # Create a production build and zip it for distribution
 npm run zip
+
+# Run linter
+npm run lint
 ```
 
 In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
