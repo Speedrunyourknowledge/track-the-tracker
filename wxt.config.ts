@@ -1,6 +1,7 @@
 import { defineConfig } from "wxt";
 
 export default defineConfig({
+  srcDir: "src",
   extensionApi: "chrome",
   manifest: {
     name: "Track the Tracker",
