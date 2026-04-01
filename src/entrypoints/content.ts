@@ -1,9 +1,14 @@
 // Content script — injected into every page.
-// Can read document.cookie and page-level info that the background can't see directly.
+//
+// WHY THE CONTENT SCRIPT?
+// chrome.webRequest in the background can intercept outgoing web requests, but it 
+// cannot read request bodies. Reading this information requires page-level access.
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
-    console.log("Track the Tracker content script loaded on", window.location.hostname);
-    // TODO: observe DOM mutations, read first-party cookies, send to background
+    // TODO: Detect the use of Fetch and XMLHttpRequest, notify the service worker 
+    // if third-party requests are made. This should be implemented in a way that
+    // doesn't flag legitimate third-party authentication requests as tracking.
   },
 });

@@ -6,7 +6,7 @@
     "dev": "wxt",
     "zip": "wxt zip",
     "lint": "eslint",
-    "postinstall": "wxt prepare"
+    "sync": "wxt prepare"
   },
   "devDependencies": {
     "@types/node": "^20",

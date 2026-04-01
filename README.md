@@ -14,17 +14,22 @@ Most users unknowingly authorize cross-site tracking by clicking "Accept All" on
 [Screenshots will go here]
 
 ## Project Structure
+[WXT](https://wxt.dev/guide/essentials/project-structure) is used to package the source code into the final extension. 
 
 ```
-entrypoints/
-├─ background.ts        # Service worker: event listeners
-├─ content.ts           # Content script: reads page-level data
+src/
+├─ entrypoints/
+│   ├─ background.ts         # Service worker: priveleged coordinator
+│   ├─ content.ts            # Content script: observer with page-level access
+│   │
+│   └─ popup/
+│       ├─ index.html        # Extension popup
+│       └─ main.ts           # Popup logic & UI
 │
-└─ popup/
-    ├─ index.html       # Extension popup window
-    └─ main.ts          # Popup logic & UI rendering
+└─ features/
+    └─ cookies/        # Cookie detection feature
 
-wxt.config.ts           # Extension manifest & permissions
+wxt.config.ts          # Extension manifest & permissions
 ```
 
 ## Getting Started
@@ -48,6 +53,10 @@ npm run zip
 
 # Run linter
 npm run lint
+
+# Sync wxt config
+# (Only needed if you changed the config)
+npm run sync
 ```
 
 In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
