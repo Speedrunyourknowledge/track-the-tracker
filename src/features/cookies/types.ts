@@ -86,3 +86,26 @@ export interface GetCookiesResponse {
   /** ISO timestamp of when the query ran. */
   queriedAt: string;
 }
+
+/** Alert patterns detected by analyzing POST payloads */
+export type AlertPattern = "action_tracking" | "pii_exfiltration";
+
+/** Information about a detected privacy alert */
+export interface AlertInfo {
+  id: string; // Unique ID (e.g., hash or requestId)
+  type: AlertPattern;
+  url: string; // the URL that triggered the alert
+  domain: string; // The third-party domain
+  details: string[]; // Details like what was found ("phone number", "click action")
+}
+
+/** Message sent from the popup to the background to fetch triggered alerts. */
+export interface GetAlertsMessage {
+  type: "GET_ALERTS";
+  tabId: number;
+}
+
+/** Response returned by the background for a GET_ALERTS message. */
+export interface GetAlertsResponse {
+  alerts: AlertInfo[];
+}

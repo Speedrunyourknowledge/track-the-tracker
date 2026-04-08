@@ -16,7 +16,60 @@ import {
   clearThirdPartyOrigins,
   isThirdPartyRequest,
 } from "../features/cookies/thirdPartyDomains";
-import type { GetCookiesMessage, GetCookiesResponse } from "../features/cookies/types";
+import type {
+  GetCookiesMessage,
+  GetCookiesResponse,
+  AlertInfo,
+  GetAlertsMessage,
+} from "../features/cookies/types";
+
+// ---------------------------------------------------------------------------
+// Privacy Alert State
+// ---------------------------------------------------------------------------
+
+// Maps tabId to a list of alerts detected on that tab
+const tabAlerts = new Map<number, AlertInfo[]>();
+
+// Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
+const pendingPayloads = new Map<string, string>(); // requestId -> payload string
+
+function clearAlerts(tabId: number): void {
+  tabAlerts.delete(tabId);
+}
+
+function addAlert(tabId: number, alert: AlertInfo): void {
+  const alerts = tabAlerts.get(tabId) || [];
+  // Avoid duplicate alerts for the exact same issue
+  if (!alerts.some((a) => a.id === alert.id)) {
+    alerts.push(alert);
+    tabAlerts.set(tabId, alerts);
+  }
+}
+
+/** Extracts a string from a WebRequestBody */
+function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string {
+  if (requestBody.formData) {
+    try {
+      return JSON.stringify(requestBody.formData);
+    }
+ catch {
+      return "";
+    }
+  }
+  if (requestBody.raw && requestBody.raw.length > 0) {
+    const bytes = requestBody.raw[0].bytes;
+    if (bytes) {
+      try {
+        const decoder = new TextDecoder("utf-8");
+        return decoder.decode(bytes);
+      }
+ catch {
+        // Ignore decoding errors
+      }
+    }
+  }
+  return "";
+}
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -87,8 +140,95 @@ export default defineBackground(() => {
   // tabId < 0 means the request came from the service worker itself, not a tab.
   // initiator is undefined for top-level navigations — skip those too.
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // PAYLOAD INTERCEPTION — Detect PII and Tracking in POST requests.
+  // -------------------------------------------------------------------------
+  chrome.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (details.method === "POST" && details.requestBody) {
+        const payload = getPayloadString(details.requestBody);
+        if (payload) {
+          pendingPayloads.set(details.requestId, payload);
+        }
+      }
+    },
+    { urls: ["<all_urls>"] },
+    ["requestBody"]
+  );
+
+  chrome.webRequest.onSendHeaders.addListener(
+    (details) => {
+      const payload = pendingPayloads.get(details.requestId);
+      if (!payload) {
+        return;
+      }
+
+      // Check for PII
+      const piiDetails: string[] = [];
+      const emailMatch = payload.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+      if (emailMatch) {
+piiDetails.push("Email address(es)");
+}
+      
+      const phoneMatch = payload.match(/(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g);
+      if (phoneMatch) {
+piiDetails.push("Phone number(s)");
+}
+
+      const domain = new URL(details.url).hostname;
+
+      if (piiDetails.length > 0) {
+        addAlert(details.tabId, {
+          id: details.requestId + "-pii",
+          type: "pii_exfiltration",
+          url: details.url,
+          domain,
+          details: piiDetails,
+        });
+      }
+
+      // Check for Action Tracking
+      if (details.initiator && isThirdPartyRequest(details.url, details.initiator)) {
+        const hasCookie = details.requestHeaders?.some(
+          (h) => h.name.toLowerCase() === "cookie"
+        );
+        if (hasCookie) {
+          const trackingDetails: string[] = [];
+          if (/click/i.test(payload)) {
+trackingDetails.push("Click behavior");
+}
+          if (/scroll(?:_depth)?/i.test(payload)) {
+trackingDetails.push("Scroll depth/behavior");
+}
+          if (/video(?:_engagement)?/i.test(payload)) {
+trackingDetails.push("Video engagement");
+}
+
+          if (trackingDetails.length > 0) {
+            addAlert(details.tabId, {
+              id: details.requestId + "-tracking",
+              type: "action_tracking",
+              url: details.url,
+              domain,
+              details: trackingDetails,
+            });
+          }
+        }
+      }
+    },
+    { urls: ["<all_urls>"] },
+    ["requestHeaders", "extraHeaders"]
+  );
+
+  chrome.webRequest.onErrorOccurred.addListener(
+    (details) => pendingPayloads.delete(details.requestId),
+    { urls: ["<all_urls>"] }
+  );
+
   chrome.webRequest.onCompleted.addListener(
     (details) => {
+      pendingPayloads.delete(details.requestId);
+
       if (details.tabId < 0 || !details.initiator) {
         return;
       }
@@ -133,6 +273,7 @@ export default defineBackground(() => {
     }
 
     if (changeInfo.status === "loading") {
+      clearAlerts(tabId);
       clearThirdPartyOrigins(tabId).catch((err) =>
         console.error("[Track the Tracker] Failed to clear third-party origins:", err),
       );
@@ -155,6 +296,7 @@ export default defineBackground(() => {
   // CLEANUP — remove storage entries when a tab is closed.
   // -------------------------------------------------------------------------
   chrome.tabs.onRemoved.addListener((tabId) => {
+      clearAlerts(tabId);
     clearThirdPartyOrigins(tabId).catch((err) =>
       console.error("[Track the Tracker] Third-party origin cleanup failed:", err),
     );
@@ -170,15 +312,24 @@ export default defineBackground(() => {
   // -------------------------------------------------------------------------
   chrome.runtime.onMessage.addListener(
     (
-      message: GetCookiesMessage,
+      message: unknown,
       _sender,
-      sendResponse: (response: GetCookiesResponse) => void,
+      sendResponse: (response: unknown) => void,
     ) => {
-      if (message.type !== "GET_COOKIES") {
+      const msg = message as { type?: string };
+      if (msg.type === "GET_ALERTS") {
+        const alertsMsg = message as GetAlertsMessage;
+        const alerts = tabAlerts.get(alertsMsg.tabId) || [];
+        sendResponse({ alerts });
         return false;
       }
 
-      queryCookiesWithThirdParty(message.url, message.tabId)
+      if (msg.type !== "GET_COOKIES") {
+        return false;
+      }
+
+      const cookieMessage = message as GetCookiesMessage;
+      queryCookiesWithThirdParty(cookieMessage.url, cookieMessage.tabId)
         .then((result) => {
           const response: GetCookiesResponse = {
             cookies: result.cookies,

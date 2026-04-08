@@ -2,7 +2,11 @@
 //
 // Communicates with the background service worker via chrome.runtime.sendMessage.
 
-import type { GetCookiesMessage, GetCookiesResponse, CookieInfo } from "../../features/cookies/types";
+import type {
+  GetCookiesResponse,
+  CookieInfo,
+  GetAlertsResponse,
+} from "../../features/cookies/types";
 
 const app = document.getElementById("app")!;
 app.textContent = "Loading cookies…";
@@ -10,6 +14,31 @@ app.textContent = "Loading cookies…";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Top-level renderer — builds the alerts UI block. */
+function renderAlerts(response: GetAlertsResponse): void {
+  const alerts = response.alerts;
+  if (alerts.length === 0) {
+return;
+}
+
+  const alertsHtml = `
+    <div style="background-color: #fee2e2; border: 1px solid #ef4444; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <h3 style="margin: 0 0 8px 0; color: #b91c1c;">⚠️ Privacy Alerts</h3>
+      ${alerts.map(a => `
+        <div style="margin-bottom: 8px;">
+          <strong>${a.type === 'pii_exfiltration' ? '🛑 PII Exfiltration' : '👀 Action Tracking'}</strong><br/>
+          <div style="color: #7f1d1d; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
+          <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
+            ${a.details.map(d => `<span style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  
+  app.insertAdjacentHTML('afterbegin', alertsHtml);
+}
 
 /** Top-level renderer — builds the full popup UI from a GetCookiesResponse. */
 function renderCookies(response: GetCookiesResponse): void {
@@ -146,7 +175,20 @@ function escapeHtml(str: string): string {
 // Main: get the active tab URL + tabId, then ask the background for cookies.
 // ---------------------------------------------------------------------------
 
-chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+function sendMessageAsync<T = unknown>(message: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      }
+ else {
+        resolve(response);
+      }
+    });
+  });
+}
+
+chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
   const tab = tabs[0];
   const url = tab?.url;
   const tabId = tab?.id;
@@ -156,13 +198,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     return;
   }
 
-  const message: GetCookiesMessage = { type: "GET_COOKIES", url, tabId };
-
-  chrome.runtime.sendMessage(message, (response: GetCookiesResponse) => {
-    if (chrome.runtime.lastError) {
-      app.textContent = `Error: ${chrome.runtime.lastError.message}`;
-      return;
-    }
-    renderCookies(response);
-  });
+  try {
+    const alertsRes = await sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId });
+    const cookiesRes = await sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId });
+    
+    // Clear loading text and render
+    app.textContent = "";
+    
+    renderCookies(cookiesRes);
+    renderAlerts(alertsRes);
+  }
+ catch (err: unknown) {
+    app.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
 });
