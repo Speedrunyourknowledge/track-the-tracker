@@ -126,6 +126,8 @@ export interface PostRequestInfo {
   fields: string[];
   /** Subset of fields that matched a known PII pattern (email, phone, location) */
   piiFields: string[];
+  /** True when the request included a Cookie header — the third party can link this POST to a persistent identity */
+  hasCookie: boolean;
 }
 
 /** Message sent from the popup to the background to fetch observed POST requests. */

@@ -432,6 +432,12 @@ export default defineBackground(() => {
         allPiiFieldNames.some((p) => p.toLowerCase() === f.toLowerCase())
       );
 
+      // True when the request includes a Cookie header — the third party can
+      // tie this POST to a persistent identity stored on the user's browser.
+      const hasCookie = details.requestHeaders?.some(
+        (h) => h.name.toLowerCase() === "cookie"
+      ) ?? false;
+
       // Record every third-party non-auth POST so the user can inspect them.
       addPostRequest(details.tabId, {
         id: details.requestId,
@@ -440,6 +446,7 @@ export default defineBackground(() => {
         payloadPreview,
         fields,
         piiFields,
+        hasCookie,
       });
 
       // --- PII check ---
@@ -492,9 +499,6 @@ export default defineBackground(() => {
       // --- Action tracking check ---
       // Requires a Cookie header so we know the third party can tie this
       // request to a persistent identity.
-      const hasCookie = details.requestHeaders?.some(
-        (h) => h.name.toLowerCase() === "cookie"
-      );
       if (hasCookie) {
         const trackingDetails: string[] = [];
         if (/click/i.test(payload)) {

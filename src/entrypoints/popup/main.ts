@@ -58,12 +58,13 @@ function renderPostRequests(response: GetPostRequestsResponse): void {
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
       <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
       ${requests.map(r => {
+        const pillBase = "display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 5px;border-radius:10px;font-size:0.72rem;vertical-align:middle;";
         const fieldTags = r.fields.length > 0
           ? r.fields.map(f => {
               const isPii = r.piiFields.includes(f);
               const style = isPii
-                ? "background:#ffedd5;border:1px solid #f97316;color:#9a3412;padding:1px 5px;border-radius:10px;font-size:0.72rem;white-space:nowrap;"
-                : "background:#f3f4f6;border:1px solid #d1d5db;color:#374151;padding:1px 5px;border-radius:10px;font-size:0.72rem;white-space:nowrap;";
+                ? `${pillBase}background:#ffedd5;border:1px solid #f97316;color:#9a3412;`
+                : `${pillBase}background:#f3f4f6;border:1px solid #d1d5db;color:#374151;`;
               return `<span style="${style}">${escapeHtml(f)}</span>`;
             }).join(" ")
           : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
@@ -75,6 +76,7 @@ function renderPostRequests(response: GetPostRequestsResponse): void {
             </summary>
             <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
               <div>URL: <code>${escapeHtml(r.url)}</code></div>
+              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span> <span style="color:#92400e;font-size:0.72rem;">Third-party cookie sent with this request</span></div>` : ""}
               <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
             </div>
           </details>
