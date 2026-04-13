@@ -56,21 +56,30 @@ function renderPostRequests(response: GetPostRequestsResponse): void {
 
   const requestsHtml = `
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
-      <h3 style="margin: 0 0 8px 0;">Third-party POST Requests (${requests.length})</h3>
-      ${requests.map(r => `
-        <details style="margin-bottom: 6px;">
-          <summary style="cursor: pointer; word-break: break-all;">
-            <code style="font-size: 0.78rem;">${escapeHtml(r.domain)}</code>
-          </summary>
-          <div style="margin-top: 4px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
-            <div>URL: <code>${escapeHtml(r.url)}</code></div>
-            ${r.payloadPreview ? `
-              <div style="margin-top: 4px;">Payload:</div>
-              <code style="display: block; margin-top: 2px; padding: 4px 6px; background: #f5f5f5; border-radius: 3px; font-size: 0.72rem; word-break: break-all; white-space: pre-wrap;">${escapeHtml(r.payloadPreview)}</code>
-            ` : "<div style='color:#aaa;margin-top:2px;'>No payload captured</div>"}
-          </div>
-        </details>
-      `).join("")}
+      <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
+      ${requests.map(r => {
+        const fieldTags = r.fields.length > 0
+          ? r.fields.map(f => {
+              const isPii = r.piiFields.includes(f);
+              const style = isPii
+                ? "background:#ffedd5;border:1px solid #f97316;color:#9a3412;padding:1px 5px;border-radius:10px;font-size:0.72rem;white-space:nowrap;"
+                : "background:#f3f4f6;border:1px solid #d1d5db;color:#374151;padding:1px 5px;border-radius:10px;font-size:0.72rem;white-space:nowrap;";
+              return `<span style="${style}">${escapeHtml(f)}</span>`;
+            }).join(" ")
+          : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
+
+        return `
+          <details style="margin-bottom: 6px;">
+            <summary style="cursor: pointer; word-break: break-all;">
+              <code style="font-size: 0.78rem;">${escapeHtml(r.domain)}</code>
+            </summary>
+            <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
+              <div>URL: <code>${escapeHtml(r.url)}</code></div>
+              <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
+            </div>
+          </details>
+        `;
+      }).join("")}
     </div>
   `;
 

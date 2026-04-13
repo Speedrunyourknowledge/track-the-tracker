@@ -122,6 +122,10 @@ export interface PostRequestInfo {
   domain: string;
   /** First 500 characters of the decoded request body */
   payloadPreview: string;
+  /** Unique field names extracted from the payload (JSON keys or URL-encoded param names) */
+  fields: string[];
+  /** Subset of fields that matched a known PII pattern (email, phone, location) */
+  piiFields: string[];
 }
 
 /** Message sent from the popup to the background to fetch observed POST requests. */

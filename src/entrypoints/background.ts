@@ -197,6 +197,61 @@ function hasField(payload: string, field: string): boolean {
 }
 
 /**
+ * Extracts unique field names from a payload for display in the popup.
+ * For JSON, collects keys from the root object and 2 levels deeper (i.e.
+ * root keys, their children's keys, and their grandchildren's keys).
+ * For URL-encoded payloads, returns each parameter name.
+ * Capped at 20 keys to keep the UI manageable.
+ */
+function extractFields(payload: string): string[] {
+  const keys = new Set<string>();
+
+  // Try JSON
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    function collect(value: unknown, depth: number): void {
+      if (depth > 2 || keys.size >= 20) {
+        return;
+      }
+      if (Array.isArray(value)) {
+        if (value.length > 0) {
+          collect(value[0], depth);
+        }
+      } 
+      else if (typeof value === "object" && value !== null) {
+        for (const k of Object.keys(value as Record<string, unknown>)) {
+          keys.add(k);
+          collect((value as Record<string, unknown>)[k], depth + 1);
+        }
+      }
+    }
+    collect(parsed, 0);
+    if (keys.size > 0) {
+      return [...keys];
+    }
+  } 
+  catch {
+    // Not valid JSON — fall through to URL-encoded
+  }
+
+  // Try URL-encoded form data
+  try {
+    const params = new URLSearchParams(payload);
+    for (const k of params.keys()) {
+      keys.add(k);
+      if (keys.size >= 20) {
+        break;
+      }
+    }
+  } 
+  catch {
+    // Ignore
+  }
+
+  return [...keys];
+}
+
+/**
  * Returns true if the request looks like an authentication handshake.
  * Uses OAuth payload field names and path heuristics rather than a domain
  * allowlist, so it works across all identity providers.
@@ -349,6 +404,17 @@ export default defineBackground(() => {
         return;
       }
 
+      // Skip binary requests (gRPC, protobuf, raw byte streams). These are
+      // typically internal service calls, not user-data tracking payloads,
+      // and their encoded bodies produce meaningless garbled output.
+      const contentType = details.requestHeaders
+        ?.find((h) => h.name.toLowerCase() === "content-type")
+        ?.value ?? "";
+      if (/grpc|protobuf|octet-stream/i.test(contentType)) {
+        pendingPayloads.delete(details.requestId);
+        return;
+      }
+
       // Skip authentication handshakes (OAuth token exchanges, OpenID Connect,
       // etc.) so legitimate "Sign in with Google"-style flows are not flagged.
       if (isAuthRequest(details.url, payload)) {
@@ -357,6 +423,14 @@ export default defineBackground(() => {
 
       const domain = new URL(details.url).hostname;
       const payloadPreview = payload.slice(0, PAYLOAD_PREVIEW_MAX);
+      const fields = extractFields(payload);
+
+      // Mark which extracted fields match a known PII pattern so the popup
+      // can highlight them without duplicating the detection logic.
+      const allPiiFieldNames = [...EMAIL_FIELD_NAMES, ...PHONE_FIELD_NAMES, ...LOCATION_FIELD_NAMES];
+      const piiFields = fields.filter((f) =>
+        allPiiFieldNames.some((p) => p.toLowerCase() === f.toLowerCase())
+      );
 
       // Record every third-party non-auth POST so the user can inspect them.
       addPostRequest(details.tabId, {
@@ -364,6 +438,8 @@ export default defineBackground(() => {
         url: details.url,
         domain,
         payloadPreview,
+        fields,
+        piiFields,
       });
 
       // --- PII check ---
