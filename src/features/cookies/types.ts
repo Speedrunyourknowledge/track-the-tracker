@@ -97,6 +97,8 @@ export interface AlertInfo {
   url: string; // the URL that triggered the alert
   domain: string; // The third-party domain
   details: string[]; // Details like what was found ("phone number", "click action")
+  /** First 500 characters of the decoded request body, for manual review */
+  payload: string;
 }
 
 /** Message sent from the popup to the background to fetch triggered alerts. */
@@ -108,4 +110,27 @@ export interface GetAlertsMessage {
 /** Response returned by the background for a GET_ALERTS message. */
 export interface GetAlertsResponse {
   alerts: AlertInfo[];
+}
+
+/**
+ * A third-party POST request observed during this page load that was not
+ * filtered out as an authentication request.
+ */
+export interface PostRequestInfo {
+  id: string;
+  url: string;
+  domain: string;
+  /** First 500 characters of the decoded request body */
+  payloadPreview: string;
+}
+
+/** Message sent from the popup to the background to fetch observed POST requests. */
+export interface GetPostRequestsMessage {
+  type: "GET_POST_REQUESTS";
+  tabId: number;
+}
+
+/** Response returned by the background for a GET_POST_REQUESTS message. */
+export interface GetPostRequestsResponse {
+  requests: PostRequestInfo[];
 }

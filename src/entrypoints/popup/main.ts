@@ -6,6 +6,7 @@ import type {
   GetCookiesResponse,
   CookieInfo,
   GetAlertsResponse,
+  GetPostRequestsResponse,
 } from "../../features/cookies/types";
 
 const app = document.getElementById("app")!;
@@ -19,25 +20,61 @@ app.textContent = "Loading cookies…";
 function renderAlerts(response: GetAlertsResponse): void {
   const alerts = response.alerts;
   if (alerts.length === 0) {
-return;
-}
+    return;
+  }
 
   const alertsHtml = `
-    <div style="background-color: #fee2e2; border: 1px solid #ef4444; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
-      <h3 style="margin: 0 0 8px 0; color: #b91c1c;">⚠️ Privacy Alerts</h3>
+    <div style="background-color: #fff7ed; border: 1px solid #f97316; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <h3 style="margin: 0 0 8px 0; color: #c2410c;">⚠️ Privacy Alerts</h3>
       ${alerts.map(a => `
         <div style="margin-bottom: 8px;">
           <strong>${a.type === 'pii_exfiltration' ? '🛑 PII Exfiltration' : '👀 Action Tracking'}</strong><br/>
-          <div style="color: #7f1d1d; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
+          <div style="color: #9a3412; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
           <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
-            ${a.details.map(d => `<span style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
+            ${a.details.map(d => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
           </div>
+          ${a.payload ? `
+            <details style="margin-top: 6px;">
+              <summary style="cursor: pointer; color: #9a3412; font-size: 0.75rem;">View payload</summary>
+              <code style="display: block; margin-top: 4px; padding: 4px 6px; background: #ffedd5; border-radius: 3px; font-size: 0.72rem; word-break: break-all; white-space: pre-wrap;">${escapeHtml(a.payload)}</code>
+            </details>
+          ` : ""}
         </div>
       `).join("")}
     </div>
   `;
-  
-  app.insertAdjacentHTML('afterbegin', alertsHtml);
+
+  app.insertAdjacentHTML("afterbegin", alertsHtml);
+}
+
+/** Top-level renderer — builds the third-party POST requests UI block. */
+function renderPostRequests(response: GetPostRequestsResponse): void {
+  const requests = response.requests;
+  if (requests.length === 0) {
+    return;
+  }
+
+  const requestsHtml = `
+    <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <h3 style="margin: 0 0 8px 0;">Third-party POST Requests (${requests.length})</h3>
+      ${requests.map(r => `
+        <details style="margin-bottom: 6px;">
+          <summary style="cursor: pointer; word-break: break-all;">
+            <code style="font-size: 0.78rem;">${escapeHtml(r.domain)}</code>
+          </summary>
+          <div style="margin-top: 4px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
+            <div>URL: <code>${escapeHtml(r.url)}</code></div>
+            ${r.payloadPreview ? `
+              <div style="margin-top: 4px;">Payload:</div>
+              <code style="display: block; margin-top: 2px; padding: 4px 6px; background: #f5f5f5; border-radius: 3px; font-size: 0.72rem; word-break: break-all; white-space: pre-wrap;">${escapeHtml(r.payloadPreview)}</code>
+            ` : "<div style='color:#aaa;margin-top:2px;'>No payload captured</div>"}
+          </div>
+        </details>
+      `).join("")}
+    </div>
+  `;
+
+  app.insertAdjacentHTML("afterbegin", requestsHtml);
 }
 
 /** Top-level renderer — builds the full popup UI from a GetCookiesResponse. */
@@ -199,16 +236,21 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
   }
 
   try {
-    const alertsRes = await sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId });
-    const cookiesRes = await sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId });
-    
-    // Clear loading text and render
+    const [alertsRes, postReqRes, cookiesRes] = await Promise.all([
+      sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId }),
+      sendMessageAsync<GetPostRequestsResponse>({ type: "GET_POST_REQUESTS", tabId }),
+      sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId }),
+    ]);
+
     app.textContent = "";
-    
+
+    // Render in reverse display order using insertAdjacentHTML("afterbegin"):
+    // cookies first (bottom), then post requests (middle), then alerts (top).
     renderCookies(cookiesRes);
+    renderPostRequests(postReqRes);
     renderAlerts(alertsRes);
-  }
- catch (err: unknown) {
+  } 
+  catch (err: unknown) {
     app.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 });

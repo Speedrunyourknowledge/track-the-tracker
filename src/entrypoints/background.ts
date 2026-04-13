@@ -10,6 +10,7 @@
 // re-spawned on demand. Do not rely on in-memory state surviving between
 // activations — use chrome.storage if you need persistence.
 
+import { getDomain } from "tldts";
 import { queryCookiesWithThirdParty } from "../features/cookies/cookieQuery";
 import {
   recordThirdPartyOrigin,
@@ -21,6 +22,8 @@ import type {
   GetCookiesResponse,
   AlertInfo,
   GetAlertsMessage,
+  PostRequestInfo,
+  GetPostRequestsMessage,
 } from "../features/cookies/types";
 
 // ---------------------------------------------------------------------------
@@ -30,11 +33,18 @@ import type {
 // Maps tabId to a list of alerts detected on that tab
 const tabAlerts = new Map<number, AlertInfo[]>();
 
+// Maps tabId to all third-party POST requests observed (non-auth, non-first-party)
+const tabPostRequests = new Map<number, PostRequestInfo[]>();
+
 // Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
 const pendingPayloads = new Map<string, string>(); // requestId -> payload string
 
-function clearAlerts(tabId: number): void {
+// Maximum characters of payload stored for display in the popup
+const PAYLOAD_PREVIEW_MAX = 500;
+
+function clearTabData(tabId: number): void {
   tabAlerts.delete(tabId);
+  tabPostRequests.delete(tabId);
 }
 
 function addAlert(tabId: number, alert: AlertInfo): void {
@@ -43,7 +53,165 @@ function addAlert(tabId: number, alert: AlertInfo): void {
   if (!alerts.some((a) => a.id === alert.id)) {
     alerts.push(alert);
     tabAlerts.set(tabId, alerts);
+    if (alert.type === "pii_exfiltration") {
+      setPiiBadge(tabId);
+    }
   }
+}
+
+function addPostRequest(tabId: number, req: PostRequestInfo): void {
+  const reqs = tabPostRequests.get(tabId) || [];
+  if (!reqs.some((r) => r.id === req.id)) {
+    reqs.push(req);
+    tabPostRequests.set(tabId, reqs);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth request detection
+// ---------------------------------------------------------------------------
+
+// OAuth 2.0 / OpenID Connect payload field names (RFC 6749, RFC 7523).
+// If a POST body contains any of these, it is almost certainly an auth
+// handshake, not a tracking call — regardless of which domain it goes to.
+const AUTH_PAYLOAD_FIELDS = [
+  "grant_type",    // present in every OAuth 2.0 token request
+  "client_secret", // OAuth client credential
+  "assertion",     // JWT bearer assertion (RFC 7523)
+  "id_token",      // OpenID Connect identity token
+  "refresh_token", // OAuth 2.0 refresh token exchange
+];
+
+// Match /oauth and /oauth2 path prefixes only. We intentionally exclude
+// broader terms like /token or /login because those appear in tracker
+// endpoint paths too (e.g. /api/get-token-info, /events/user-login-actions).
+// The payload field check below handles those auth flows instead.
+const AUTH_PATH_RE = /\/oauth2?(?:\/|$)/i;
+
+// ---------------------------------------------------------------------------
+// PII field-name detection tables
+// ---------------------------------------------------------------------------
+
+// Generic email-related field names. Unambiguous enough to flag against any
+// domain, and catch hashed emails that the regex below cannot detect.
+const EMAIL_FIELD_NAMES = [
+  "email",
+  "user_email",
+  "email_address",
+  "mail_address",
+  "hashed_email",
+  "sha256_email",
+  "sha256_email_address",
+];
+
+// Generic phone-related field names. `phone_number` and `sha256_phone_number`
+// are specific enough to be reliable without domain context.
+const PHONE_FIELD_NAMES = [
+  "phone",
+  "phone_number",
+  "hashed_phone",
+  "sha256_phone_number",
+];
+
+// Location-related field names. Specific enough that false positives are
+// rare, and location tracking is high-impact.
+const LOCATION_FIELD_NAMES = [
+  "latitude",
+  "longitude",
+  "lat",
+  "lng",
+  "geo",
+  "coords",
+  "coordinates",
+  "geolocation",
+  "gps",
+];
+
+// Per-tracker field names for known advertising and analytics platforms.
+// Keys are registered domains matched via getDomain(). These catch
+// platform-specific hashed fields (e.g. Facebook "em", "ph") that are
+// meaningless noise without the domain context.
+const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
+  // Facebook CAPI — short field names are Meta-specific abbreviations,
+  // too ambiguous to flag generically without the domain context.
+  "facebook.com": {
+    label: "Facebook",
+    fields: ["em", "ph", "fn", "ln", "db", "ge", "external_id"],
+  },
+  // Google Analytics 4 enhanced conversions — ep.email is a GA4-specific
+  // event parameter; sha256_* variants are already in the generic lists.
+  "google-analytics.com": {
+    label: "Google Analytics",
+    fields: ["ep.email"],
+  },
+  "google.com": {
+    label: "Google Analytics",
+    fields: ["ep.email"],
+  },
+  // TikTok Events API — email/phone_number covered generically; external_id is
+  // TikTok's persistent user identifier.
+  "tiktok.com": {
+    label: "TikTok",
+    fields: ["external_id"],
+  },
+  // Snapchat — em/ph are Meta-style abbreviations also used by Snap;
+  // madid is the Mobile Ad ID (IDFA/GAID).
+  "snap.com": {
+    label: "Snapchat",
+    fields: ["em", "ph", "madid"],
+  },
+  // LinkedIn Insight Tag
+  "linkedin.com": {
+    label: "LinkedIn",
+    fields: ["firstName", "lastName"],
+  },
+  // Pinterest Tag
+  "pinterest.com": {
+    label: "Pinterest",
+    fields: ["em", "ph"],
+  },
+  // X (Twitter) Conversions API — twclid ties a conversion back to a specific
+  // Twitter ad click.
+  "twitter.com": {
+    label: "X (Twitter)",
+    fields: ["twclid"],
+  },
+  "x.com": {
+    label: "X (Twitter)",
+    fields: ["twclid"],
+  },
+  // Reddit Pixel — idfa/aaid are iOS/Android device advertising IDs.
+  "redditmedia.com": {
+    label: "Reddit",
+    fields: ["external_id", "idfa", "aaid"],
+  },
+};
+
+/**
+ * Returns true if `field` appears as a key in the payload, handling both
+ * URL-encoded (key=value) and JSON ("key": value) formats.
+ */
+function hasField(payload: string, field: string): boolean {
+  const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[&?{,\\[\\s])${esc}=|["']${esc}["']\\s*:`, "i").test(payload);
+}
+
+/**
+ * Returns true if the request looks like an authentication handshake.
+ * Uses OAuth payload field names and path heuristics rather than a domain
+ * allowlist, so it works across all identity providers.
+ */
+function isAuthRequest(url: string, payload: string): boolean {
+  try {
+    if (AUTH_PATH_RE.test(new URL(url).pathname)) {
+      return true;
+    }
+  } 
+  catch {
+    // ignore invalid URLs
+  }
+  const lower = payload.toLowerCase();
+  return AUTH_PAYLOAD_FIELDS.some((field) => lower.includes(field));
 }
 
 /** Extracts a string from a WebRequestBody */
@@ -86,10 +254,22 @@ function updateBadge(tabId: number, count: number): void {
     chrome.action.setBadgeBackgroundColor({ color: "#ef4444", tabId });
     chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
     chrome.action.setBadgeText({ text: String(count), tabId });
-  } 
+  }
   else {
     chrome.action.setBadgeText({ text: "", tabId });
   }
+}
+
+/**
+ * Switches the badge to orange with a "!" to signal an active PII alert.
+ * Takes priority over the normal red cookie-count badge so the user notices
+ * something more serious than a tracking cookie was detected.
+ * Resets naturally on the next navigation when updateBadge() runs again.
+ */
+function setPiiBadge(tabId: number): void {
+  chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
+  chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+  chrome.action.setBadgeText({ text: "!", tabId });
 }
 
 // Per-tab debounce timers so the badge updates after the burst of webRequest
@@ -163,19 +343,64 @@ export default defineBackground(() => {
         return;
       }
 
-      // Check for PII
-      const piiDetails: string[] = [];
-      const emailMatch = payload.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
-      if (emailMatch) {
-piiDetails.push("Email address(es)");
-}
-      
-      const phoneMatch = payload.match(/(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g);
-      if (phoneMatch) {
-piiDetails.push("Phone number(s)");
-}
+      // Only analyze third-party requests — first-party POST requests (e.g.
+      // submitting a form to your own site) are not a privacy concern.
+      if (!details.initiator || !isThirdPartyRequest(details.url, details.initiator)) {
+        return;
+      }
+
+      // Skip authentication handshakes (OAuth token exchanges, OpenID Connect,
+      // etc.) so legitimate "Sign in with Google"-style flows are not flagged.
+      if (isAuthRequest(details.url, payload)) {
+        return;
+      }
 
       const domain = new URL(details.url).hostname;
+      const payloadPreview = payload.slice(0, PAYLOAD_PREVIEW_MAX);
+
+      // Record every third-party non-auth POST so the user can inspect them.
+      addPostRequest(details.tabId, {
+        id: details.requestId,
+        url: details.url,
+        domain,
+        payloadPreview,
+      });
+
+      // --- PII check ---
+      const piiDetails: string[] = [];
+
+      // Plaintext email via regex
+      if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(payload)) {
+        piiDetails.push("Email (plaintext)");
+      }
+
+      // Email field names — catches hashed emails the regex misses
+      const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
+      if (emailFields.length > 0) {
+        piiDetails.push(`Email field: ${emailFields.join(", ")}`);
+      }
+
+      // Phone field names
+      const phoneFields = PHONE_FIELD_NAMES.filter((f) => hasField(payload, f));
+      if (phoneFields.length > 0) {
+        piiDetails.push(`Phone field: ${phoneFields.join(", ")}`);
+      }
+
+      // Location field names
+      const locationFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
+      if (locationFields.length > 0) {
+        piiDetails.push(`Location data: ${locationFields.join(", ")}`);
+      }
+
+      // Tracker-specific field names (e.g. Facebook "em", Google "sha256_email_address")
+      const registeredDomain = getDomain(domain) ?? "";
+      const trackerEntry = TRACKER_FIELD_MAP[registeredDomain];
+      if (trackerEntry) {
+        const matched = trackerEntry.fields.filter((f) => hasField(payload, f));
+        if (matched.length > 0) {
+          piiDetails.push(`${trackerEntry.label} user data: ${matched.join(", ")}`);
+        }
+      }
 
       if (piiDetails.length > 0) {
         addAlert(details.tabId, {
@@ -184,35 +409,37 @@ piiDetails.push("Phone number(s)");
           url: details.url,
           domain,
           details: piiDetails,
+          payload: payloadPreview,
         });
       }
 
-      // Check for Action Tracking
-      if (details.initiator && isThirdPartyRequest(details.url, details.initiator)) {
-        const hasCookie = details.requestHeaders?.some(
-          (h) => h.name.toLowerCase() === "cookie"
-        );
-        if (hasCookie) {
-          const trackingDetails: string[] = [];
-          if (/click/i.test(payload)) {
-trackingDetails.push("Click behavior");
-}
-          if (/scroll(?:_depth)?/i.test(payload)) {
-trackingDetails.push("Scroll depth/behavior");
-}
-          if (/video(?:_engagement)?/i.test(payload)) {
-trackingDetails.push("Video engagement");
-}
+      // --- Action tracking check ---
+      // Requires a Cookie header so we know the third party can tie this
+      // request to a persistent identity.
+      const hasCookie = details.requestHeaders?.some(
+        (h) => h.name.toLowerCase() === "cookie"
+      );
+      if (hasCookie) {
+        const trackingDetails: string[] = [];
+        if (/click/i.test(payload)) {
+          trackingDetails.push("Click behavior");
+        }
+        if (/scroll(?:_depth)?/i.test(payload)) {
+          trackingDetails.push("Scroll depth/behavior");
+        }
+        if (/video(?:_engagement)?/i.test(payload)) {
+          trackingDetails.push("Video engagement");
+        }
 
-          if (trackingDetails.length > 0) {
-            addAlert(details.tabId, {
-              id: details.requestId + "-tracking",
-              type: "action_tracking",
-              url: details.url,
-              domain,
-              details: trackingDetails,
-            });
-          }
+        if (trackingDetails.length > 0) {
+          addAlert(details.tabId, {
+            id: details.requestId + "-tracking",
+            type: "action_tracking",
+            url: details.url,
+            domain,
+            details: trackingDetails,
+            payload: payloadPreview,
+          });
         }
       }
     },
@@ -273,7 +500,7 @@ trackingDetails.push("Video engagement");
     }
 
     if (changeInfo.status === "loading") {
-      clearAlerts(tabId);
+      clearTabData(tabId);
       clearThirdPartyOrigins(tabId).catch((err) =>
         console.error("[Track the Tracker] Failed to clear third-party origins:", err),
       );
@@ -296,7 +523,7 @@ trackingDetails.push("Video engagement");
   // CLEANUP — remove storage entries when a tab is closed.
   // -------------------------------------------------------------------------
   chrome.tabs.onRemoved.addListener((tabId) => {
-      clearAlerts(tabId);
+      clearTabData(tabId);
     clearThirdPartyOrigins(tabId).catch((err) =>
       console.error("[Track the Tracker] Third-party origin cleanup failed:", err),
     );
@@ -321,6 +548,13 @@ trackingDetails.push("Video engagement");
         const alertsMsg = message as GetAlertsMessage;
         const alerts = tabAlerts.get(alertsMsg.tabId) || [];
         sendResponse({ alerts });
+        return false;
+      }
+
+      if (msg.type === "GET_POST_REQUESTS") {
+        const postMsg = message as GetPostRequestsMessage;
+        const requests = tabPostRequests.get(postMsg.tabId) || [];
+        sendResponse({ requests });
         return false;
       }
 
