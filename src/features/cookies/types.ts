@@ -88,7 +88,7 @@ export interface GetCookiesResponse {
 }
 
 /** Alert patterns detected by analyzing POST payloads */
-export type AlertPattern = "action_tracking" | "pii_exfiltration";
+export type AlertPattern = "action_tracking" | "pii_exfiltration" | "location_tracking";
 
 /** Information about a detected privacy alert */
 export interface AlertInfo {
@@ -97,6 +97,10 @@ export interface AlertInfo {
   url: string; // the URL that triggered the alert
   domain: string; // The third-party domain
   details: string[]; // Details like what was found ("phone number", "click action")
+  /** The raw payload field names (keys) that triggered the alert, used to highlight them in the UI */
+  flaggedFields: string[];
+  /** Verbatim text snippets extracted around each match location, so the trigger is always visible */
+  matchSnippets: string[];
   /** First 500 characters of the decoded request body, for manual review */
   payload: string;
 }
@@ -126,8 +130,12 @@ export interface PostRequestInfo {
   fields: string[];
   /** Subset of fields that matched a known PII pattern (email, phone, location) */
   piiFields: string[];
+  /** Subset of fields that matched an action tracking pattern (page, click, scroll, etc.) */
+  trackingFields: string[];
   /** True when the request included a Cookie header — the third party can link this POST to a persistent identity */
   hasCookie: boolean;
+  /** How many times this domain+fields combination was observed during this page load */
+  count: number;
 }
 
 /** Message sent from the popup to the background to fetch observed POST requests. */
@@ -136,7 +144,20 @@ export interface GetPostRequestsMessage {
   tabId: number;
 }
 
+/** Sent when the user opens the Requests tab — tells the background to dismiss the PII badge. */
+export interface ClearPiiBadgeMessage {
+  type: "CLEAR_PII_BADGE";
+  tabId: number;
+}
+
+/** Sent when the user views the Cookies tab — tells the background to dismiss the cookie dot badge. */
+export interface ClearCookieBadgeMessage {
+  type: "CLEAR_COOKIE_BADGE";
+  tabId: number;
+}
+
 /** Response returned by the background for a GET_POST_REQUESTS message. */
 export interface GetPostRequestsResponse {
   requests: PostRequestInfo[];
+  retrievedAt: string;
 }

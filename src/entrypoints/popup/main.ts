@@ -7,6 +7,8 @@ import type {
   CookieInfo,
   GetAlertsResponse,
   GetPostRequestsResponse,
+  ClearPiiBadgeMessage,
+  ClearCookieBadgeMessage,
 } from "../../features/cookies/types";
 
 const app = document.getElementById("app")!;
@@ -16,85 +18,146 @@ app.textContent = "Loading cookies…";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Top-level renderer — builds the alerts UI block. */
-function renderAlerts(response: GetAlertsResponse): void {
-  const alerts = response.alerts;
-  if (alerts.length === 0) {
-    return;
+/**
+ * Renders the payload of an alert as a structured key-value list.
+ * Flagged fields are sorted to the top and highlighted.
+ * For unrecognized formats, omits the payload entirely.
+ */
+function formatAlertPayload(payload: string, flaggedFields: string[]): string {
+  if (!payload) return "";
+  const flagged = new Set(flaggedFields);
+
+  function renderTable(entries: [string, unknown][]): string {
+    entries.sort(([a], [b]) => {
+      const af = flagged.has(a), bf = flagged.has(b);
+      if (af !== bf) return af ? -1 : 1;
+      return 0;
+    });
+    const rows = entries.map(([k, v]) => {
+      const raw = typeof v === "string" ? v : JSON.stringify(v ?? "");
+      const isFlag = flagged.has(k);
+      const rowStyle = isFlag
+        ? "display:flex;gap:6px;align-items:baseline;background:#ffedd5;border-left:3px solid #f97316;padding:2px 4px 2px 6px;margin-bottom:1px;"
+        : "display:flex;gap:6px;align-items:baseline;padding:2px 4px;margin-bottom:1px;";
+      return `<div style="${rowStyle}">` +
+        `<span style="color:${isFlag ? "#9a3412" : "#6b7280"};flex-shrink:0;min-width:0;">${escapeHtml(k)}</span>` +
+        `<code style="color:#374151;font-size:0.7rem;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(raw)}</code>` +
+        `</div>`;
+    }).join("");
+    return `<details style="margin-top:6px;">` +
+      `<summary style="cursor:pointer;color:#9a3412;font-size:0.75rem;">View transmitted data</summary>` +
+      `<div style="margin-top:4px;border:1px solid #fed7aa;background:#fffbf7;border-radius:3px;padding:4px;max-height:180px;overflow-y:auto;">${rows}</div>` +
+      `</details>`;
   }
 
-  const alertsHtml = `
-    <div style="background-color: #fff7ed; border: 1px solid #f97316; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
-      <h3 style="margin: 0 0 8px 0; color: #c2410c;">⚠️ Privacy Alerts</h3>
-      ${alerts.map(a => `
-        <div style="margin-bottom: 8px;">
-          <strong>${a.type === 'pii_exfiltration' ? '🛑 PII Exfiltration' : '👀 Action Tracking'}</strong><br/>
-          <div style="color: #9a3412; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
-          <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
-            ${a.details.map(d => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
-          </div>
-          ${a.payload ? `
-            <details style="margin-top: 6px;">
-              <summary style="cursor: pointer; color: #9a3412; font-size: 0.75rem;">View payload</summary>
-              <code style="display: block; margin-top: 4px; padding: 4px 6px; background: #ffedd5; border-radius: 3px; font-size: 0.72rem; word-break: break-all; white-space: pre-wrap;">${escapeHtml(a.payload)}</code>
-            </details>
-          ` : ""}
-        </div>
-      `).join("")}
-    </div>
-  `;
+  // Try JSON
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return renderTable(Object.entries(parsed as Record<string, unknown>));
+    }
+  } catch { /* not JSON */ }
 
-  app.insertAdjacentHTML("afterbegin", alertsHtml);
+  // Try URL-encoded form data — require keys that look like identifiers
+  try {
+    const entries = [...new URLSearchParams(payload).entries()]
+      .filter(([k]) => /^\w[\w.-]*$/.test(k)) as [string, unknown][];
+    if (entries.length > 0) {
+      return renderTable(entries);
+    }
+  } catch { /* not URL-encoded */ }
+
+  // Unrecognized format — the detail pills already say what was detected
+  return "";
 }
 
-/** Top-level renderer — builds the third-party POST requests UI block. */
-function renderPostRequests(response: GetPostRequestsResponse): void {
-  const requests = response.requests;
-  if (requests.length === 0) {
-    return;
+/** Builds the alerts section HTML string. */
+function buildAlertsHtml(response: GetAlertsResponse): string {
+  const alerts = response.alerts;
+  if (alerts.length === 0) return "";
+
+  const piiAlerts      = alerts.filter(a => a.type === "pii_exfiltration");
+  const locationAlerts = alerts.filter(a => a.type === "location_tracking");
+  const trackingAlerts = alerts.filter(a => a.type === "action_tracking");
+
+  function alertItemsHtml(group: typeof alerts): string {
+    return group.map(a => `
+      <div style="margin-bottom: 8px;">
+        <div style="color: #9a3412; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
+        <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
+          ${a.details.map(d => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
+        </div>
+        ${a.matchSnippets.length > 0 ? `<div style="margin-top:5px;">${a.matchSnippets.map(s => `<code style="display:block;font-size:0.7rem;background:#fffbf7;border:1px solid #fed7aa;border-radius:3px;padding:4px 6px;margin-top:2px;word-break:break-all;">${escapeHtml(s)}</code>`).join("")}</div>` : ""}
+      </div>`).join("");
   }
 
-  const requestsHtml = `
+  function sectionHtml(emoji: string, label: string, group: typeof alerts): string {
+    if (group.length === 0) return "";
+    return `
+      <details style="margin-bottom: 8px;">
+        <summary style="cursor:pointer;font-weight:bold;">
+          ${emoji} ${label} <span style="background:#ffedd5;border:1px solid #fed7aa;color:#9a3412;padding:1px 7px;border-radius:10px;font-size:0.75rem;font-weight:normal;">${group.length}</span>
+        </summary>
+        <div style="margin-top:6px;padding-left:4px;border-left:2px solid #fed7aa;">
+          ${alertItemsHtml(group)}
+        </div>
+      </details>`;
+  }
+
+  return `
+    <div style="background-color: #fff7ed; border: 1px solid #f97316; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <h3 style="margin: 0 0 8px 0; color: #c2410c;">⚠️ Privacy Alerts</h3>
+      ${sectionHtml("🛑", "PII Exfiltration", piiAlerts)}
+      ${sectionHtml("📍", "Location Tracking", locationAlerts)}
+      ${sectionHtml("👀", "Action Tracking", trackingAlerts)}
+    </div>`;
+}
+
+/** Builds the third-party POST requests section HTML string. */
+function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
+  const { requests } = response;
+  if (requests.length === 0) return "";
+
+  return `
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
       <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
       ${requests.map(r => {
-        const pillBase = "display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 5px;border-radius:10px;font-size:0.72rem;vertical-align:middle;";
+        const PILL_MAX_CHARS = 24;
+        const pillBase = "display:inline-block;white-space:nowrap;padding:1px 5px;border-radius:10px;font-size:0.72rem;vertical-align:middle;";
         const fieldTags = r.fields.length > 0
           ? r.fields.map(f => {
+              const label = f.length > PILL_MAX_CHARS ? f.slice(0, PILL_MAX_CHARS) + "\u2026" : f;
               const isPii = r.piiFields.includes(f);
-              const style = isPii
+              const isTracking = r.trackingFields.includes(f);
+              const style = isPii || isTracking
                 ? `${pillBase}background:#ffedd5;border:1px solid #f97316;color:#9a3412;`
                 : `${pillBase}background:#f3f4f6;border:1px solid #d1d5db;color:#374151;`;
-              return `<span style="${style}">${escapeHtml(f)}</span>`;
+              return `<span style="${style}">${escapeHtml(label)}</span>`;
             }).join(" ")
           : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
 
         return `
           <details style="margin-bottom: 6px;">
             <summary style="cursor: pointer; word-break: break-all;">
-              <code style="font-size: 0.78rem;">${escapeHtml(r.domain)}</code>
+              <code style="font-size: 0.78rem;${r.hasCookie ? "color:#c2410c;font-weight:bold;" : ""}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
             </summary>
             <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
               <div>URL: <code>${escapeHtml(r.url)}</code></div>
-              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span> <span style="color:#92400e;font-size:0.72rem;">Third-party cookie sent with this request</span></div>` : ""}
+              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span></div>` : ""}
               <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
             </div>
           </details>
         `;
       }).join("")}
-    </div>
-  `;
-
-  app.insertAdjacentHTML("afterbegin", requestsHtml);
+    </div>`;
 }
 
-/** Top-level renderer — builds the full popup UI from a GetCookiesResponse. */
-function renderCookies(response: GetCookiesResponse): void {
+/** Builds the cookies section HTML string. */
+function buildCookiesHtml(response: GetCookiesResponse): string {
   const { cookies, queriedAt } = response;
 
   if (cookies.length === 0) {
-    app.innerHTML = "<p>No cookies found for this page.</p>";
-    return;
+    return "<p>No cookies found for this page.</p>";
   }
 
   const byDomain = (a: CookieInfo, b: CookieInfo) => a.domain.localeCompare(b.domain);
@@ -104,14 +167,10 @@ function renderCookies(response: GetCookiesResponse): void {
   const trackers = thirdParty.filter((c) => !c.isSecurityCookie).sort(byDomain);
   const securityCookies = thirdParty.filter((c) => c.isSecurityCookie).sort(byDomain);
 
-  // Red only when there are real trackers; security-only third-party cookies
-  // are harmless and don't warrant a red alert.
   const thirdPartySummaryStyle = trackers.length > 0
-    ? "cursor:pointer;font-weight:bold;color:#ef4444;"
+    ? "cursor:pointer;font-weight:bold;color:#e05320;"
     : "cursor:pointer;font-weight:bold;";
 
-  // Don't show a redundant "None" for trackers when the only third-party
-  // cookies present are harmless security ones.
   const trackerList = trackers.length > 0
     ? cookieListHtml(trackers)
     : securityCookies.length > 0
@@ -127,28 +186,20 @@ function renderCookies(response: GetCookiesResponse): void {
     </details>
   ` : "";
 
-  app.innerHTML = `
-    <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Queried at ${queriedAt}</p>
-
+  return `
+    <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(queriedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
     <p style="font-weight:bold;margin:8px 0 4px;">
       All cookies — ${thirdParty.length} third-party, ${firstParty.length} first-party
     </p>
-
     <details open style="margin-top:4px;">
-      <summary style="${thirdPartySummaryStyle}">
-        Third-party (${thirdParty.length})
-      </summary>
+      <summary style="${thirdPartySummaryStyle}">Third-party (${thirdParty.length})</summary>
       ${securitySubsection}
       ${trackerList}
     </details>
-
     <details open style="margin-top:4px;">
-      <summary style="cursor:pointer;font-weight:bold;">
-        First-party (${firstParty.length})
-      </summary>
+      <summary style="cursor:pointer;font-weight:bold;">First-party (${firstParty.length})</summary>
       ${cookieListHtml(firstParty)}
-    </details>
-  `;
+    </details>`;
 }
 
 /** Builds an HTML string for a list of CookieInfo objects. */
@@ -253,14 +304,54 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId }),
     ]);
 
-    app.textContent = "";
+    const hasAlerts = alertsRes.alerts.length > 0;
 
-    // Render in reverse display order using insertAdjacentHTML("afterbegin"):
-    // cookies first (bottom), then post requests (middle), then alerts (top).
-    renderCookies(cookiesRes);
-    renderPostRequests(postReqRes);
-    renderAlerts(alertsRes);
-  } 
+    const alertDot = hasAlerts
+      ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`
+      : "";
+
+    const tabBtnBase = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
+    const tabBtnActive = tabBtnBase + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
+    const tabBtnInactive = tabBtnBase + "color:#555;";
+
+    app.innerHTML = `
+      <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
+        <button id="tab-btn-cookies" style="${tabBtnActive}">Cookies</button>
+        <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
+      </div>
+      <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
+      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes)}</div>
+    `;
+
+    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP.
+    const btnCookies = document.getElementById("tab-btn-cookies")!;
+    const btnRequests = document.getElementById("tab-btn-requests")!;
+    const panelCookies = document.getElementById("panel-cookies")!;
+    const panelRequests = document.getElementById("panel-requests")!;
+
+    btnCookies.addEventListener("click", () => {
+      panelCookies.style.display = "";
+      panelRequests.style.display = "none";
+      btnCookies.setAttribute("style", tabBtnActive);
+      btnRequests.setAttribute("style", tabBtnInactive);
+      // Dismiss the cookie dot now that the user is viewing the cookies tab.
+      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+    });
+
+    btnRequests.addEventListener("click", () => {
+      panelCookies.style.display = "none";
+      panelRequests.style.display = "";
+      btnCookies.setAttribute("style", tabBtnInactive);
+      btnRequests.setAttribute("style", tabBtnActive);
+      // Remove the orange dot once the user has seen the alerts tab.
+      document.getElementById("alert-dot")?.remove();
+      // Dismiss the PII badge now that the user is viewing the alerts.
+      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
+    });
+
+    // The Cookies tab is shown by default on popup open — clear the cookie dot immediately.
+    sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+  }
   catch (err: unknown) {
     app.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
   }

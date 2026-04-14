@@ -24,6 +24,8 @@ import type {
   GetAlertsMessage,
   PostRequestInfo,
   GetPostRequestsMessage,
+  ClearPiiBadgeMessage,
+  ClearCookieBadgeMessage,
 } from "../features/cookies/types";
 
 // ---------------------------------------------------------------------------
@@ -36,15 +38,42 @@ const tabAlerts = new Map<number, AlertInfo[]>();
 // Maps tabId to all third-party POST requests observed (non-auth, non-first-party)
 const tabPostRequests = new Map<number, PostRequestInfo[]>();
 
+// Tracks the current badge state per tab so the cookie indicator is only
+// shown once per page load ("cookie" | "pii").  Once either badge is set
+// further updateBadge calls are ignored, preventing repeated notifications
+// as new third-party requests trickle in after the initial page load.
+const tabBadgeState = new Map<number, "cookie" | "pii">();
+
 // Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
 const pendingPayloads = new Map<string, string>(); // requestId -> payload string
 
-// Maximum characters of payload stored for display in the popup
-const PAYLOAD_PREVIEW_MAX = 500;
+// Maximum top-level keys stored from a JSON payload for display in the popup
+const PAYLOAD_PREVIEW_MAX_KEYS = 30;
+// Maximum characters stored for non-JSON payloads
+const PAYLOAD_PREVIEW_MAX_CHARS = 500;
+
+/**
+ * Builds a payload string safe for storage and later display.
+ * For JSON objects: parses and re-serializes up to PAYLOAD_PREVIEW_MAX_KEYS
+ * top-level keys, so the stored value is always valid JSON regardless of
+ * original payload size.
+ * For non-JSON: falls back to a raw character slice.
+ */
+function buildPayloadPreview(payload: string): string {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const entries = Object.entries(parsed as Record<string, unknown>).slice(0, PAYLOAD_PREVIEW_MAX_KEYS);
+      return JSON.stringify(Object.fromEntries(entries));
+    }
+  } catch { /* not JSON */ }
+  return payload.slice(0, PAYLOAD_PREVIEW_MAX_CHARS);
+}
 
 function clearTabData(tabId: number): void {
   tabAlerts.delete(tabId);
   tabPostRequests.delete(tabId);
+  tabBadgeState.delete(tabId);  // reset so fresh indicator can appear on next page
 }
 
 function addAlert(tabId: number, alert: AlertInfo): void {
@@ -53,16 +82,31 @@ function addAlert(tabId: number, alert: AlertInfo): void {
   if (!alerts.some((a) => a.id === alert.id)) {
     alerts.push(alert);
     tabAlerts.set(tabId, alerts);
-    if (alert.type === "pii_exfiltration") {
+    if (alert.type === "pii_exfiltration" || alert.type === "location_tracking") {
       setPiiBadge(tabId);
     }
   }
 }
 
-function addPostRequest(tabId: number, req: PostRequestInfo): void {
+function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): void {
   const reqs = tabPostRequests.get(tabId) || [];
-  if (!reqs.some((r) => r.id === req.id)) {
-    reqs.push(req);
+  const existing = reqs.find((r) => r.domain === req.domain);
+  if (existing) {
+    existing.count += 1;
+    // Union fields, piiFields, and trackingFields across all requests to this domain.
+    for (const f of req.fields) {
+      if (!existing.fields.includes(f)) existing.fields.push(f);
+    }
+    for (const f of req.piiFields) {
+      if (!existing.piiFields.includes(f)) existing.piiFields.push(f);
+    }
+    for (const f of req.trackingFields) {
+      if (!existing.trackingFields.includes(f)) existing.trackingFields.push(f);
+    }
+    // If any occurrence sent a cookie, mark the entry as cookie-linked.
+    if (req.hasCookie) existing.hasCookie = true;
+  } else {
+    reqs.push({ ...req, count: 1 });
     tabPostRequests.set(tabId, reqs);
   }
 }
@@ -113,16 +157,16 @@ const PHONE_FIELD_NAMES = [
   "sha256_phone_number",
 ];
 
-// Location-related field names. Specific enough that false positives are
-// rare, and location tracking is high-impact.
+// Location-related field names. Limited to unambiguous GPS/geo terms.
+// "coordinates" and "coords" are intentionally excluded — they are too
+// generic (screen bounding boxes, SVG points, etc.) to reliably indicate
+// location tracking.
 const LOCATION_FIELD_NAMES = [
   "latitude",
   "longitude",
   "lat",
   "lng",
   "geo",
-  "coords",
-  "coordinates",
   "geolocation",
   "gps",
 ];
@@ -269,6 +313,21 @@ function isAuthRequest(url: string, payload: string): boolean {
   return AUTH_PAYLOAD_FIELDS.some((field) => lower.includes(field));
 }
 
+/**
+ * Extracts a short text snippet centered on the first match of pattern in
+ * payload, with up to 25 chars of context on each side.
+ * Returns an empty string if there is no match.
+ */
+function extractMatchSnippet(payload: string, pattern: RegExp): string {
+  const match = pattern.exec(payload);
+  if (!match) return "";
+  const start = Math.max(0, match.index - 10);
+  const end = Math.min(payload.length, match.index + match[0].length + 55);
+  const raw = (start > 0 ? "\u2026" : "") + payload.slice(start, end) + (end < payload.length ? "\u2026" : "");
+  // Unescape JSON string escapes that appear when the payload was stringified from formData
+  return raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+}
+
 /** Extracts a string from a WebRequestBody */
 function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string {
   if (requestBody.formData) {
@@ -300,15 +359,20 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
 
 /**
  * Updates the extension icon badge for a specific tab.
- * A red badge with the third-party cookie count appears on the toolbar icon,
- * alerting users without requiring them to open the popup.
- * Passing count=0 clears the badge entirely.
+ * A yellow dot appears once when third-party tracking cookies are first
+ * detected, alerting the user without repeatedly retriggering as more
+ * requests arrive.  Passing count=0 clears the badge (e.g. on navigation).
  */
 function updateBadge(tabId: number, count: number): void {
   if (count > 0) {
-    chrome.action.setBadgeBackgroundColor({ color: "#ef4444", tabId });
-    chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-    chrome.action.setBadgeText({ text: String(count), tabId });
+    // Only show the indicator once per page load — if a badge is already
+    // visible (cookie or higher-priority PII) don't overwrite or re-trigger.
+    if (!tabBadgeState.has(tabId)) {
+      chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
+      chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+      chrome.action.setBadgeText({ text: "!", tabId });
+      tabBadgeState.set(tabId, "cookie");
+    }
   }
   else {
     chrome.action.setBadgeText({ text: "", tabId });
@@ -317,7 +381,7 @@ function updateBadge(tabId: number, count: number): void {
 
 /**
  * Switches the badge to orange with a "!" to signal an active PII alert.
- * Takes priority over the normal red cookie-count badge so the user notices
+ * Takes priority over the yellow cookie-dot badge so the user notices
  * something more serious than a tracking cookie was detected.
  * Resets naturally on the next navigation when updateBadge() runs again.
  */
@@ -325,6 +389,8 @@ function setPiiBadge(tabId: number): void {
   chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
   chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
   chrome.action.setBadgeText({ text: "!", tabId });
+  // Mark as pii so subsequent cookie-badge calls don't overwrite this alert.
+  tabBadgeState.set(tabId, "pii");
 }
 
 // Per-tab debounce timers so the badge updates after the burst of webRequest
@@ -422,15 +488,21 @@ export default defineBackground(() => {
       }
 
       const domain = new URL(details.url).hostname;
-      const payloadPreview = payload.slice(0, PAYLOAD_PREVIEW_MAX);
+      const payloadPreview = buildPayloadPreview(payload);
       const fields = extractFields(payload);
 
       // Mark which extracted fields match a known PII pattern so the popup
       // can highlight them without duplicating the detection logic.
+      // LOCATION_FIELD_NAMES included here only so location fields are
+      // highlighted in the POST requests list; location alerts are separate.
       const allPiiFieldNames = [...EMAIL_FIELD_NAMES, ...PHONE_FIELD_NAMES, ...LOCATION_FIELD_NAMES];
       const piiFields = fields.filter((f) =>
         allPiiFieldNames.some((p) => p.toLowerCase() === f.toLowerCase())
       );
+
+      // Pre-compute tracking fields so they can be highlighted in the requests list.
+      const TRACKING_RES = [/click/i, /scroll/i, /video/i, /coord/i, /page|referrer/i];
+      const trackingFields = fields.filter(f => TRACKING_RES.some(re => re.test(f)));
 
       // True when the request includes a Cookie header — the third party can
       // tie this POST to a persistent identity stored on the user's browser.
@@ -446,14 +518,19 @@ export default defineBackground(() => {
         payloadPreview,
         fields,
         piiFields,
+        trackingFields,
         hasCookie,
       });
 
       // --- PII check ---
       const piiDetails: string[] = [];
+      const flaggedFields: string[] = [];
 
-      // Plaintext email via regex
-      if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(payload)) {
+      // Plaintext email via regex (no specific field name to highlight).
+      // Requires at least 3 chars before @ and a domain with at least one dot
+      // and a 2+ char TLD, to avoid false positives from binary payloads that
+      // happen to contain @ symbols.
+      if (/[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/.test(payload)) {
         piiDetails.push("Email (plaintext)");
       }
 
@@ -461,18 +538,14 @@ export default defineBackground(() => {
       const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (emailFields.length > 0) {
         piiDetails.push(`Email field: ${emailFields.join(", ")}`);
+        flaggedFields.push(...emailFields);
       }
 
       // Phone field names
       const phoneFields = PHONE_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (phoneFields.length > 0) {
         piiDetails.push(`Phone field: ${phoneFields.join(", ")}`);
-      }
-
-      // Location field names
-      const locationFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
-      if (locationFields.length > 0) {
-        piiDetails.push(`Location data: ${locationFields.join(", ")}`);
+        flaggedFields.push(...phoneFields);
       }
 
       // Tracker-specific field names (e.g. Facebook "em", Google "sha256_email_address")
@@ -482,35 +555,121 @@ export default defineBackground(() => {
         const matched = trackerEntry.fields.filter((f) => hasField(payload, f));
         if (matched.length > 0) {
           piiDetails.push(`${trackerEntry.label} user data: ${matched.join(", ")}`);
+          flaggedFields.push(...matched);
         }
       }
 
+      // --- Location tracking alert (separate from PII) ---
+      const locationFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
+      if (locationFields.length > 0) {
+        const locationFlaggedFields = [...locationFields];
+        const locationSnippets: string[] = [];
+        for (const field of locationFlaggedFields) {
+          const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const fieldPattern = new RegExp(`(?:["']${esc}["']\\s*:|[?&]${esc}=)`, "i");
+          const fieldSnippet = extractMatchSnippet(payload, fieldPattern);
+          if (fieldSnippet) {
+            locationSnippets.push(fieldSnippet);
+            break;
+          }
+        }
+        addAlert(details.tabId, {
+          id: details.requestId + "-location",
+          type: "location_tracking",
+          url: details.url,
+          domain,
+          details: [`Location fields: ${locationFields.join(", ")}`],
+          flaggedFields: locationFlaggedFields,
+          matchSnippets: locationSnippets,
+          payload: payloadPreview,
+        });
+      }
+
       if (piiDetails.length > 0) {
+        const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
+        const piiSnippets: string[] = [];
+        const emailSnippet = extractMatchSnippet(payload, EMAIL_RE);
+        if (emailSnippet) piiSnippets.push(emailSnippet);
+
+        // For field-name matches, extract a snippet showing the field and its
+        // value so the user can see what triggered the alert (e.g. email).
+        for (const field of flaggedFields) {
+          const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const fieldPattern = new RegExp(`(?:["']${esc}["']\\s*:|[?&]${esc}=)`, "i");
+          const fieldSnippet = extractMatchSnippet(payload, fieldPattern);
+          if (fieldSnippet) {
+            piiSnippets.push(fieldSnippet);
+            break;
+          }
+        }
+
         addAlert(details.tabId, {
           id: details.requestId + "-pii",
           type: "pii_exfiltration",
           url: details.url,
           domain,
           details: piiDetails,
+          flaggedFields,
+          matchSnippets: piiSnippets,
           payload: payloadPreview,
         });
       }
 
       // --- Action tracking check ---
-      // Requires a Cookie header so we know the third party can tie this
-      // request to a persistent identity.
-      if (hasCookie) {
+      // No cookie requirement — a third party receiving behavioural field names
+      // (page URL, click coords, scroll depth, etc.) is tracking the user
+      // regardless of whether a cookie header is present. The cookie flag is
+      // still surfaced as metadata in the POST requests list.
+      {
         const trackingDetails: string[] = [];
-        if (/click/i.test(payload)) {
-          trackingDetails.push("Click behavior");
-        }
-        if (/scroll(?:_depth)?/i.test(payload)) {
-          trackingDetails.push("Scroll depth/behavior");
-        }
-        if (/video(?:_engagement)?/i.test(payload)) {
-          trackingDetails.push("Video engagement");
-        }
+        const trackingFlaggedFields: string[] = [];
+        const trackingSnippets: string[] = [];
 
+        // Simple substring matches against field names — any field name
+        // containing these keywords sent to a third party is considered tracking.
+        const CLICK_RE = /click/i;
+        const SCROLL_RE = /scroll/i;
+        const VIDEO_RE = /video/i;
+        const COORDS_RE = /coord/i;
+        const PAGE_RE = /page|referrer/i;
+
+        // Only fire when each keyword appears in a field *name*.
+        // Matching against values produces too many false positives.
+        const clickMatches = fields.filter(f => CLICK_RE.test(f));
+        if (clickMatches.length > 0) {
+          trackingDetails.push("Clicks");
+          trackingFlaggedFields.push(...clickMatches);
+          const snippet = extractMatchSnippet(payload, CLICK_RE);
+          if (snippet) trackingSnippets.push(snippet);
+        }
+        const scrollMatches = fields.filter(f => SCROLL_RE.test(f));
+        if (scrollMatches.length > 0) {
+          trackingDetails.push("Scroll behavior");
+          trackingFlaggedFields.push(...scrollMatches);
+          const snippet = extractMatchSnippet(payload, SCROLL_RE);
+          if (snippet) trackingSnippets.push(snippet);
+        }
+        const videoMatches = fields.filter(f => VIDEO_RE.test(f));
+        if (videoMatches.length > 0) {
+          trackingDetails.push("Video playback");
+          trackingFlaggedFields.push(...videoMatches);
+          const snippet = extractMatchSnippet(payload, VIDEO_RE);
+          if (snippet) trackingSnippets.push(snippet);
+        }
+        const coordMatches = fields.filter(f => COORDS_RE.test(f));
+        if (coordMatches.length > 0) {
+          trackingDetails.push("Screen coordinates");
+          trackingFlaggedFields.push(...coordMatches);
+          const snippet = extractMatchSnippet(payload, COORDS_RE);
+          if (snippet) trackingSnippets.push(snippet);
+        }
+        const pageMatches = fields.filter(f => PAGE_RE.test(f));
+        if (pageMatches.length > 0) {
+          trackingDetails.push("Page visits");
+          trackingFlaggedFields.push(...pageMatches);
+          const snippet = extractMatchSnippet(payload, PAGE_RE);
+          if (snippet) trackingSnippets.push(snippet);
+        }
         if (trackingDetails.length > 0) {
           addAlert(details.tabId, {
             id: details.requestId + "-tracking",
@@ -518,6 +677,8 @@ export default defineBackground(() => {
             url: details.url,
             domain,
             details: trackingDetails,
+            flaggedFields: [...new Set(trackingFlaggedFields)],
+            matchSnippets: trackingSnippets,
             payload: payloadPreview,
           });
         }
@@ -631,10 +792,34 @@ export default defineBackground(() => {
         return false;
       }
 
+      if (msg.type === "CLEAR_COOKIE_BADGE") {
+        const clearMsg = message as ClearCookieBadgeMessage;
+        const state = tabBadgeState.get(clearMsg.tabId);
+        if (state === "cookie") {
+          chrome.action.setBadgeText({ text: "", tabId: clearMsg.tabId });
+          // Keep state as "cookie" so updateBadge won't re-show the dot
+          // until the next navigation resets it via clearTabData.
+        }
+        sendResponse({});
+        return false;
+      }
+
+      if (msg.type === "CLEAR_PII_BADGE") {
+        const clearMsg = message as ClearPiiBadgeMessage;
+        const state = tabBadgeState.get(clearMsg.tabId);
+        if (state === "pii") {
+          chrome.action.setBadgeText({ text: "", tabId: clearMsg.tabId });
+          // Keep state as "pii" so neither the cookie dot nor the PII badge
+          // can reappear for this page load after the user has dismissed it.
+        }
+        sendResponse({});
+        return false;
+      }
+
       if (msg.type === "GET_POST_REQUESTS") {
         const postMsg = message as GetPostRequestsMessage;
         const requests = tabPostRequests.get(postMsg.tabId) || [];
-        sendResponse({ requests });
+        sendResponse({ requests, retrievedAt: new Date().toISOString() });
         return false;
       }
 
