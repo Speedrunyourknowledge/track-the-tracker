@@ -666,9 +666,13 @@ export default defineBackground(() => {
           const matches = fields.filter(f => re.test(f));
           if (matches.length > 0) {
             actionLabels.push(label);
-            const snippet = extractMatchSnippet(payload, re);
-            if (snippet) {
-              actionSnippets.push(snippet);
+            // One snippet per action category
+            for (const matchedField of matches) {
+              const snippet = extractMatchSnippet(payload, fieldPattern(matchedField));
+              if (snippet) {
+                actionSnippets.push(snippet);
+                break;
+              }
             }
           }
         }
