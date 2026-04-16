@@ -23,14 +23,18 @@ app.textContent = "Loading cookies…";
  * Flagged fields are sorted to the top and highlighted.
  * For unrecognized formats, omits the payload entirely.
  */
-function formatAlertPayload(payload: string, flaggedFields: string[]): string {
-  if (!payload) return "";
+function _formatAlertPayload(payload: string, flaggedFields: string[]): string {
+  if (!payload) {
+    return "";
+  }
   const flagged = new Set(flaggedFields);
 
   function renderTable(entries: [string, unknown][]): string {
     entries.sort(([a], [b]) => {
       const af = flagged.has(a), bf = flagged.has(b);
-      if (af !== bf) return af ? -1 : 1;
+      if (af !== bf) {
+        return af ? -1 : 1;
+      }
       return 0;
     });
     const rows = entries.map(([k, v]) => {
@@ -56,7 +60,8 @@ function formatAlertPayload(payload: string, flaggedFields: string[]): string {
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       return renderTable(Object.entries(parsed as Record<string, unknown>));
     }
-  } catch { /* not JSON */ }
+  }
+  catch { /* not JSON */ }
 
   // Try URL-encoded form data — require keys that look like identifiers
   try {
@@ -65,7 +70,8 @@ function formatAlertPayload(payload: string, flaggedFields: string[]): string {
     if (entries.length > 0) {
       return renderTable(entries);
     }
-  } catch { /* not URL-encoded */ }
+  }
+  catch { /* not URL-encoded */ }
 
   // Unrecognized format — the detail pills already say what was detected
   return "";
@@ -74,7 +80,9 @@ function formatAlertPayload(payload: string, flaggedFields: string[]): string {
 /** Builds the alerts section HTML string. */
 function buildAlertsHtml(response: GetAlertsResponse): string {
   const alerts = response.alerts;
-  if (alerts.length === 0) return "";
+  if (alerts.length === 0) {
+    return "";
+  }
 
   const piiAlerts      = alerts.filter(a => a.type === "pii_exfiltration");
   const locationAlerts = alerts.filter(a => a.type === "location_tracking");
@@ -92,7 +100,9 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
   }
 
   function sectionHtml(emoji: string, label: string, group: typeof alerts): string {
-    if (group.length === 0) return "";
+    if (group.length === 0) {
+      return "";
+    }
     return `
       <details style="margin-bottom: 8px;">
         <summary style="cursor:pointer;font-weight:bold;">
@@ -116,8 +126,9 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
 /** Builds the third-party POST requests section HTML string. */
 function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
   const { requests } = response;
-  if (requests.length === 0) return "";
-
+  if (requests.length === 0) {
+    return "";
+  }
   return `
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
       <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>

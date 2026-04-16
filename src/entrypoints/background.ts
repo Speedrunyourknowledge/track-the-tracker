@@ -66,7 +66,8 @@ function buildPayloadPreview(payload: string): string {
       const entries = Object.entries(parsed as Record<string, unknown>).slice(0, PAYLOAD_PREVIEW_MAX_KEYS);
       return JSON.stringify(Object.fromEntries(entries));
     }
-  } catch { /* not JSON */ }
+  }
+  catch { /* not JSON */ }
   return payload.slice(0, PAYLOAD_PREVIEW_MAX_CHARS);
 }
 
@@ -95,17 +96,26 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
     existing.count += 1;
     // Union fields, piiFields, and trackingFields across all requests to this domain.
     for (const f of req.fields) {
-      if (!existing.fields.includes(f)) existing.fields.push(f);
+      if (!existing.fields.includes(f)) {
+        existing.fields.push(f);
+      }
     }
     for (const f of req.piiFields) {
-      if (!existing.piiFields.includes(f)) existing.piiFields.push(f);
+      if (!existing.piiFields.includes(f)) {
+        existing.piiFields.push(f);
+      }
     }
     for (const f of req.trackingFields) {
-      if (!existing.trackingFields.includes(f)) existing.trackingFields.push(f);
+      if (!existing.trackingFields.includes(f)) {
+        existing.trackingFields.push(f);
+      }
     }
     // If any occurrence sent a cookie, mark the entry as cookie-linked.
-    if (req.hasCookie) existing.hasCookie = true;
-  } else {
+    if (req.hasCookie) {
+      existing.hasCookie = true;
+    }
+  }
+  else {
     reqs.push({ ...req, count: 1 });
     tabPostRequests.set(tabId, reqs);
   }
@@ -320,7 +330,9 @@ function isAuthRequest(url: string, payload: string): boolean {
  */
 function extractMatchSnippet(payload: string, pattern: RegExp): string {
   const match = pattern.exec(payload);
-  if (!match) return "";
+  if (!match) {
+    return "";
+  }
   const start = Math.max(0, match.index - 10);
   const end = Math.min(payload.length, match.index + match[0].length + 55);
   const raw = (start > 0 ? "\u2026" : "") + payload.slice(start, end) + (end < payload.length ? "\u2026" : "");
@@ -589,7 +601,9 @@ export default defineBackground(() => {
         const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
         const piiSnippets: string[] = [];
         const emailSnippet = extractMatchSnippet(payload, EMAIL_RE);
-        if (emailSnippet) piiSnippets.push(emailSnippet);
+        if (emailSnippet) {
+          piiSnippets.push(emailSnippet);
+        }
 
         // For field-name matches, extract a snippet showing the field and its
         // value so the user can see what triggered the alert (e.g. email).
@@ -640,35 +654,45 @@ export default defineBackground(() => {
           trackingDetails.push("Clicks");
           trackingFlaggedFields.push(...clickMatches);
           const snippet = extractMatchSnippet(payload, CLICK_RE);
-          if (snippet) trackingSnippets.push(snippet);
+          if (snippet) {
+            trackingSnippets.push(snippet);
+          }
         }
         const scrollMatches = fields.filter(f => SCROLL_RE.test(f));
         if (scrollMatches.length > 0) {
           trackingDetails.push("Scroll behavior");
           trackingFlaggedFields.push(...scrollMatches);
           const snippet = extractMatchSnippet(payload, SCROLL_RE);
-          if (snippet) trackingSnippets.push(snippet);
+          if (snippet) {
+            trackingSnippets.push(snippet);
+          }
         }
         const videoMatches = fields.filter(f => VIDEO_RE.test(f));
         if (videoMatches.length > 0) {
           trackingDetails.push("Video playback");
           trackingFlaggedFields.push(...videoMatches);
           const snippet = extractMatchSnippet(payload, VIDEO_RE);
-          if (snippet) trackingSnippets.push(snippet);
+          if (snippet) {
+            trackingSnippets.push(snippet);
+          }
         }
         const coordMatches = fields.filter(f => COORDS_RE.test(f));
         if (coordMatches.length > 0) {
           trackingDetails.push("Screen coordinates");
           trackingFlaggedFields.push(...coordMatches);
           const snippet = extractMatchSnippet(payload, COORDS_RE);
-          if (snippet) trackingSnippets.push(snippet);
+          if (snippet) {
+            trackingSnippets.push(snippet);
+          }
         }
         const pageMatches = fields.filter(f => PAGE_RE.test(f));
         if (pageMatches.length > 0) {
           trackingDetails.push("Page visits");
           trackingFlaggedFields.push(...pageMatches);
           const snippet = extractMatchSnippet(payload, PAGE_RE);
-          if (snippet) trackingSnippets.push(snippet);
+          if (snippet) {
+            trackingSnippets.push(snippet);
+          }
         }
         if (trackingDetails.length > 0) {
           addAlert(details.tabId, {

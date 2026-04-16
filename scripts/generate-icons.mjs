@@ -25,12 +25,16 @@ const [FG_R, FG_G, FG_B] = [255, 255, 255];    // white
 const CRC_TABLE = new Uint32Array(256);
 for (let i = 0; i < 256; i++) {
   let c = i;
-  for (let j = 0; j < 8; j++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  for (let j = 0; j < 8; j++) {
+    c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  }
   CRC_TABLE[i] = c;
 }
 function crc32(buf) {
   let crc = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  for (let i = 0; i < buf.length; i++) {
+    crc = CRC_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+  }
   return ((crc ^ 0xffffffff) >>> 0);
 }
 
@@ -57,10 +61,18 @@ function makeIHDR(size) {
 
 // ── Pixel helpers ─────────────────────────────────────────────────────────────
 function isInsideRoundedRect(x, y, size, r) {
-  if (x < r   && y < r)            return Math.hypot(x - r, y - r) < r;
-  if (x > size-1-r && y < r)       return Math.hypot(x - (size-1-r), y - r) < r;
-  if (x < r   && y > size-1-r)     return Math.hypot(x - r, y - (size-1-r)) < r;
-  if (x > size-1-r && y > size-1-r) return Math.hypot(x - (size-1-r), y - (size-1-r)) < r;
+  if (x < r   && y < r) {
+    return Math.hypot(x - r, y - r) < r;
+  }
+  if (x > size-1-r && y < r) {
+    return Math.hypot(x - (size-1-r), y - r) < r;
+  }
+  if (x < r   && y > size-1-r) {
+    return Math.hypot(x - r, y - (size-1-r)) < r;
+  }
+  if (x > size-1-r && y > size-1-r) {
+    return Math.hypot(x - (size-1-r), y - (size-1-r)) < r;
+  }
   return true;
 }
 
@@ -72,9 +84,13 @@ function isInsideT(x, y, size) {
   const bottomY  = size - pad;
 
   // Horizontal bar
-  if (y >= pad && y < pad + barH && x >= pad && x < size - pad) return true;
+  if (y >= pad && y < pad + barH && x >= pad && x < size - pad) {
+    return true;
+  }
   // Vertical stem
-  if (x >= stemX && x < stemX + stemW && y >= pad && y < bottomY) return true;
+  if (x >= stemX && x < stemX + stemW && y >= pad && y < bottomY) {
+    return true;
+  }
   return false;
 }
 
@@ -92,9 +108,11 @@ function buildRawData(size) {
       if (!isInsideRoundedRect(x, y, size, radius)) {
         // transparent outside rounded rect
         raw[off] = raw[off+1] = raw[off+2] = raw[off+3] = 0;
-      } else if (isInsideT(x, y, size)) {
+      }
+      else if (isInsideT(x, y, size)) {
         raw[off] = FG_R; raw[off+1] = FG_G; raw[off+2] = FG_B; raw[off+3] = 255;
-      } else {
+      }
+      else {
         raw[off] = BG_R; raw[off+1] = BG_G; raw[off+2] = BG_B; raw[off+3] = 255;
       }
     }
