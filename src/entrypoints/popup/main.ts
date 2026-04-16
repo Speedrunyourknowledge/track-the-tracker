@@ -18,65 +18,6 @@ app.textContent = "Loading cookies…";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Renders the payload of an alert as a structured key-value list.
- * Flagged fields are sorted to the top and highlighted.
- * For unrecognized formats, omits the payload entirely.
- */
-function _formatAlertPayload(payload: string, flaggedFields: string[]): string {
-  if (!payload) {
-    return "";
-  }
-  const flagged = new Set(flaggedFields);
-
-  function renderTable(entries: [string, unknown][]): string {
-    entries.sort(([a], [b]) => {
-      const af = flagged.has(a), bf = flagged.has(b);
-      if (af !== bf) {
-        return af ? -1 : 1;
-      }
-      return 0;
-    });
-    const rows = entries.map(([k, v]) => {
-      const raw = typeof v === "string" ? v : JSON.stringify(v ?? "");
-      const isFlag = flagged.has(k);
-      const rowStyle = isFlag
-        ? "display:flex;gap:6px;align-items:baseline;background:#ffedd5;border-left:3px solid #f97316;padding:2px 4px 2px 6px;margin-bottom:1px;"
-        : "display:flex;gap:6px;align-items:baseline;padding:2px 4px;margin-bottom:1px;";
-      return `<div style="${rowStyle}">` +
-        `<span style="color:${isFlag ? "#9a3412" : "#6b7280"};flex-shrink:0;min-width:0;">${escapeHtml(k)}</span>` +
-        `<code style="color:#374151;font-size:0.7rem;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(raw)}</code>` +
-        `</div>`;
-    }).join("");
-    return `<details style="margin-top:6px;">` +
-      `<summary style="cursor:pointer;color:#9a3412;font-size:0.75rem;">View transmitted data</summary>` +
-      `<div style="margin-top:4px;border:1px solid #fed7aa;background:#fffbf7;border-radius:3px;padding:4px;max-height:180px;overflow-y:auto;">${rows}</div>` +
-      `</details>`;
-  }
-
-  // Try JSON
-  try {
-    const parsed: unknown = JSON.parse(payload);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return renderTable(Object.entries(parsed as Record<string, unknown>));
-    }
-  }
-  catch { /* not JSON */ }
-
-  // Try URL-encoded form data — require keys that look like identifiers
-  try {
-    const entries = [...new URLSearchParams(payload).entries()]
-      .filter(([k]) => /^\w[\w.-]*$/.test(k)) as [string, unknown][];
-    if (entries.length > 0) {
-      return renderTable(entries);
-    }
-  }
-  catch { /* not URL-encoded */ }
-
-  // Unrecognized format — the detail pills already say what was detected
-  return "";
-}
-
 /** Builds the alerts section HTML string. */
 function buildAlertsHtml(response: GetAlertsResponse): string {
   const alerts = response.alerts;
@@ -93,7 +34,7 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
       <div style="margin-bottom: 8px;">
         <div style="color: #9a3412; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
         <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
-          ${a.details.map(d => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(d)}</span>`).join("")}
+          ${a.labels.map(l => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(l)}</span>`).join("")}
         </div>
         ${a.matchSnippets.length > 0 ? `<div style="margin-top:5px;">${a.matchSnippets.map(s => `<code style="display:block;font-size:0.7rem;background:#fffbf7;border:1px solid #fed7aa;border-radius:3px;padding:4px 6px;margin-top:2px;word-break:break-all;">${escapeHtml(s)}</code>`).join("")}</div>` : ""}
       </div>`).join("");
@@ -139,8 +80,8 @@ function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
           ? r.fields.map(f => {
               const label = f.length > PILL_MAX_CHARS ? f.slice(0, PILL_MAX_CHARS) + "\u2026" : f;
               const isPii = r.piiFields.includes(f);
-              const isTracking = r.trackingFields.includes(f);
-              const style = isPii || isTracking
+              const isAction = r.actionFields.includes(f);
+              const style = isPii || isAction
                 ? `${pillBase}background:#ffedd5;border:1px solid #f97316;color:#9a3412;`
                 : `${pillBase}background:#f3f4f6;border:1px solid #d1d5db;color:#374151;`;
               return `<span style="${style}">${escapeHtml(label)}</span>`;

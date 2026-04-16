@@ -96,9 +96,7 @@ export interface AlertInfo {
   type: AlertPattern;
   url: string; // the URL that triggered the alert
   domain: string; // The third-party domain
-  details: string[]; // Details like what was found ("phone number", "click action")
-  /** The raw payload field names (keys) that triggered the alert, used to highlight them in the UI */
-  flaggedFields: string[];
+  labels: string[]; // Short category labels for what was found (e.g. "Email", "Phone", "Clicks")
   /** Verbatim text snippets extracted around each match location, so the trigger is always visible */
   matchSnippets: string[];
   /** First 500 characters of the decoded request body, for manual review */
@@ -131,7 +129,7 @@ export interface PostRequestInfo {
   /** Subset of fields that matched a known PII pattern (email, phone, location) */
   piiFields: string[];
   /** Subset of fields that matched an action tracking pattern (page, click, scroll, etc.) */
-  trackingFields: string[];
+  actionFields: string[];
   /** True when the request included a Cookie header — the third party can link this POST to a persistent identity */
   hasCookie: boolean;
   /** How many times this domain+fields combination was observed during this page load */

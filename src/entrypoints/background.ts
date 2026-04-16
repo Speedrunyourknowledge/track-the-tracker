@@ -94,7 +94,7 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
   const existing = reqs.find((r) => r.domain === req.domain);
   if (existing) {
     existing.count += 1;
-    // Union fields, piiFields, and trackingFields across all requests to this domain.
+    // Union fields, piiFields, and actionFields across all requests to this domain.
     for (const f of req.fields) {
       if (!existing.fields.includes(f)) {
         existing.fields.push(f);
@@ -105,9 +105,9 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
         existing.piiFields.push(f);
       }
     }
-    for (const f of req.trackingFields) {
-      if (!existing.trackingFields.includes(f)) {
-        existing.trackingFields.push(f);
+    for (const f of req.actionFields) {
+      if (!existing.actionFields.includes(f)) {
+        existing.actionFields.push(f);
       }
     }
     // If any occurrence sent a cookie, mark the entry as cookie-linked.
@@ -125,7 +125,7 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
 // Auth request detection
 // ---------------------------------------------------------------------------
 
-// OAuth 2.0 / OpenID Connect payload field names (RFC 6749, RFC 7523).
+// OAuth 2.0 / OpenID Connect payload fields (RFC 6749, RFC 7523).
 // If a POST body contains any of these, it is almost certainly an auth
 // handshake, not a tracking call — regardless of which domain it goes to.
 const AUTH_PAYLOAD_FIELDS = [
@@ -142,12 +142,14 @@ const AUTH_PAYLOAD_FIELDS = [
 // The payload field check below handles those auth flows instead.
 const AUTH_PATH_RE = /\/oauth2?(?:\/|$)/i;
 
+// Matches page-visit fields while excluding generic fields like "pageFormat"
+const PAGE_RE = /^page(?:s|url|_url|path|_path|title|_title|view|_view|name|_name|ref|_ref|referrer|_referrer|hit|_hit)?$|^referrer(?:url|_url)?$/i;
+
 // ---------------------------------------------------------------------------
-// PII field-name detection tables
+// PII field name detection
 // ---------------------------------------------------------------------------
 
-// Generic email-related field names. Unambiguous enough to flag against any
-// domain, and catch hashed emails that the regex below cannot detect.
+// Email-related fields
 const EMAIL_FIELD_NAMES = [
   "email",
   "user_email",
@@ -158,8 +160,7 @@ const EMAIL_FIELD_NAMES = [
   "sha256_email_address",
 ];
 
-// Generic phone-related field names. `phone_number` and `sha256_phone_number`
-// are specific enough to be reliable without domain context.
+// Phone-related fields
 const PHONE_FIELD_NAMES = [
   "phone",
   "phone_number",
@@ -167,10 +168,7 @@ const PHONE_FIELD_NAMES = [
   "sha256_phone_number",
 ];
 
-// Location-related field names. Limited to unambiguous GPS/geo terms.
-// "coordinates" and "coords" are intentionally excluded — they are too
-// generic (screen bounding boxes, SVG points, etc.) to reliably indicate
-// location tracking.
+// Location-related fields
 const LOCATION_FIELD_NAMES = [
   "latitude",
   "longitude",
@@ -179,14 +177,20 @@ const LOCATION_FIELD_NAMES = [
   "geo",
   "geolocation",
   "gps",
+  "country",
+  "city",
+  "state",
+  "zip",
+  "zip_code",
+  "postal_code",
+  "region",
+  "province",
 ];
 
-// Per-tracker field names for known advertising and analytics platforms.
-// Keys are registered domains matched via getDomain(). These catch
-// platform-specific hashed fields (e.g. Facebook "em", "ph") that are
-// meaningless noise without the domain context.
+// Per-tracker field names for known advertising and analytics domains.
+// This catches domain-specific hashed fields
 const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
-  // Facebook CAPI — short field names are Meta-specific abbreviations,
+  // Facebook CAPI — short fields are Meta-specific abbreviations,
   // too ambiguous to flag generically without the domain context.
   "facebook.com": {
     label: "Facebook",
@@ -242,16 +246,36 @@ const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
 };
 
 /**
+ * Escapes special characters in a field and makes each underscore
+ * optional, so the pattern matches with or without word separators.
+ * Use this with the `i` flag for case-insensitive matching.
+ * Example: "user_email" matches "user_email", "useremail", "user-email"
+ */
+function flexibleField(name: string): string {
+  return name
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/_/g, "_?");
+}
+
+/**
+ * Builds a regex that matches `field` as a key in either URL-encoded
+ * (key=value) or JSON ("key": value) format.
+ */
+function fieldPattern(field: string): RegExp {
+  const flex = flexibleField(field);
+  return new RegExp(`(?:^|[&?{,\\[\\s])${flex}=|["']${flex}["']\\s*:`, "i");
+}
+
+/**
  * Returns true if `field` appears as a key in the payload, handling both
  * URL-encoded (key=value) and JSON ("key": value) formats.
  */
 function hasField(payload: string, field: string): boolean {
-  const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[&?{,\\[\\s])${esc}=|["']${esc}["']\\s*:`, "i").test(payload);
+  return fieldPattern(field).test(payload);
 }
 
 /**
- * Extracts unique field names from a payload for display in the popup.
+ * Extracts unique fields from a payload for display in the popup.
  * For JSON, collects keys from the root object and 2 levels deeper (i.e.
  * root keys, their children's keys, and their grandchildren's keys).
  * For URL-encoded payloads, returns each parameter name.
@@ -307,7 +331,7 @@ function extractFields(payload: string): string[] {
 
 /**
  * Returns true if the request looks like an authentication handshake.
- * Uses OAuth payload field names and path heuristics rather than a domain
+ * Uses OAuth payload fields and path heuristics rather than a domain
  * allowlist, so it works across all identity providers.
  */
 function isAuthRequest(url: string, payload: string): boolean {
@@ -437,24 +461,14 @@ export default defineBackground(() => {
   console.log("Track the Tracker background started.");
 
   // -------------------------------------------------------------------------
-  // THIRD-PARTY ORIGIN TRACKING — observe outgoing requests via webRequest.
+  // THIRD-PARTY ORIGIN TRACKING — observe outgoing requests via webRequest
   //
   // For each completed request, we check whether its domain differs from the
   // page that initiated it (the initiator). If so, it's a third-party request
   // and we record the origin so the cookie query layer can later fetch cookies
   // stored under that domain.
-  //
-  // WHY onCompleted?
-  // We don't need to block or modify requests — we only need to know which
-  // third-party domains were contacted so we can look up their cookies.
-  // onCompleted fires after the response is received, which is also when any
-  // Set-Cookie headers from that response have been applied to the cookie jar.
-  //
-  // tabId < 0 means the request came from the service worker itself, not a tab.
-  // initiator is undefined for top-level navigations — skip those too.
   // -------------------------------------------------------------------------
-  // -------------------------------------------------------------------------
-  // PAYLOAD INTERCEPTION — Detect PII and Tracking in POST requests.
+  // PAYLOAD INTERCEPTION — Detect PII and Tracking in POST requests
   // -------------------------------------------------------------------------
   chrome.webRequest.onBeforeRequest.addListener(
     (details) => {
@@ -483,8 +497,7 @@ export default defineBackground(() => {
       }
 
       // Skip binary requests (gRPC, protobuf, raw byte streams). These are
-      // typically internal service calls, not user-data tracking payloads,
-      // and their encoded bodies produce meaningless garbled output.
+      // typically internal service calls and they are not useful for analysis.
       const contentType = details.requestHeaders
         ?.find((h) => h.name.toLowerCase() === "content-type")
         ?.value ?? "";
@@ -493,8 +506,8 @@ export default defineBackground(() => {
         return;
       }
 
-      // Skip authentication handshakes (OAuth token exchanges, OpenID Connect,
-      // etc.) so legitimate "Sign in with Google"-style flows are not flagged.
+      // Skip authentication handshakes (e.g., OAuth tokens) so 
+      // legitimate "Sign in with Google"-style flows are not flagged.
       if (isAuthRequest(details.url, payload)) {
         return;
       }
@@ -503,18 +516,22 @@ export default defineBackground(() => {
       const payloadPreview = buildPayloadPreview(payload);
       const fields = extractFields(payload);
 
-      // Mark which extracted fields match a known PII pattern so the popup
-      // can highlight them without duplicating the detection logic.
-      // LOCATION_FIELD_NAMES included here only so location fields are
-      // highlighted in the POST requests list; location alerts are separate.
+      // Mark fields that match a known PII pattern so the request can be 
+      // highlighted in the POST requests list
       const allPiiFieldNames = [...EMAIL_FIELD_NAMES, ...PHONE_FIELD_NAMES, ...LOCATION_FIELD_NAMES];
       const piiFields = fields.filter((f) =>
         allPiiFieldNames.some((p) => p.toLowerCase() === f.toLowerCase())
       );
 
-      // Pre-compute tracking fields so they can be highlighted in the requests list.
-      const TRACKING_RES = [/click/i, /scroll/i, /video/i, /coord/i, /page|referrer/i];
-      const trackingFields = fields.filter(f => TRACKING_RES.some(re => re.test(f)));
+      // Pre-compute tracking fields so they can be highlighted in the POST requests list.
+      const ACTION_CATEGORIES = [
+        { re: /click/i, label: "Clicks" },
+        { re: /scroll/i, label: "Scroll behavior" },
+        { re: /video/i, label: "Video playback" },
+        { re: /coord/i, label: "Screen coordinates" },
+        { re: PAGE_RE, label: "Page visits" },
+      ];
+      const actionFields = fields.filter(f => ACTION_CATEGORIES.some(({ re }) => re.test(f)));
 
       // True when the request includes a Cookie header — the third party can
       // tie this POST to a persistent identity stored on the user's browser.
@@ -530,56 +547,49 @@ export default defineBackground(() => {
         payloadPreview,
         fields,
         piiFields,
-        trackingFields,
+        actionFields,
         hasCookie,
       });
 
       // --- PII check ---
-      const piiDetails: string[] = [];
-      const flaggedFields: string[] = [];
+      const piiLabels: string[] = [];
+      const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
 
-      // Plaintext email via regex (no specific field name to highlight).
-      // Requires at least 3 chars before @ and a domain with at least one dot
-      // and a 2+ char TLD, to avoid false positives from binary payloads that
-      // happen to contain @ symbols.
-      if (/[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/.test(payload)) {
-        piiDetails.push("Email (plaintext)");
-      }
-
-      // Email field names — catches hashed emails the regex misses
+      // Email fields
       const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (emailFields.length > 0) {
-        piiDetails.push(`Email field: ${emailFields.join(", ")}`);
-        flaggedFields.push(...emailFields);
+        piiLabels.push("Email");
+      }
+      // Fall back to regex matching to detect plaintext email addresses
+      else if (EMAIL_RE.test(payload)) {
+        piiLabels.push("Email");
       }
 
-      // Phone field names
+      // Phone fields
       const phoneFields = PHONE_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (phoneFields.length > 0) {
-        piiDetails.push(`Phone field: ${phoneFields.join(", ")}`);
-        flaggedFields.push(...phoneFields);
+        piiLabels.push("Phone");
       }
 
-      // Tracker-specific field names (e.g. Facebook "em", Google "sha256_email_address")
+      // Tracker-specific fields (e.g. Facebook "em")
       const registeredDomain = getDomain(domain) ?? "";
       const trackerEntry = TRACKER_FIELD_MAP[registeredDomain];
+      let piiTrackerFields: string[] = [];
       if (trackerEntry) {
-        const matched = trackerEntry.fields.filter((f) => hasField(payload, f));
-        if (matched.length > 0) {
-          piiDetails.push(`${trackerEntry.label} user data: ${matched.join(", ")}`);
-          flaggedFields.push(...matched);
+        piiTrackerFields = trackerEntry.fields.filter((f) => hasField(payload, f));
+        if (piiTrackerFields.length > 0) {
+          piiLabels.push(trackerEntry.label);
         }
       }
 
       // --- Location tracking alert (separate from PII) ---
-      const locationFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
-      if (locationFields.length > 0) {
-        const locationFlaggedFields = [...locationFields];
+      const locationFlaggedFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
+      if (locationFlaggedFields.length > 0) {
+        // One snippet is enough — location fields are usually grouped together
+        // (e.g., country/state/zip) so multiple snippets would overlap.
         const locationSnippets: string[] = [];
         for (const field of locationFlaggedFields) {
-          const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const fieldPattern = new RegExp(`(?:["']${esc}["']\\s*:|[?&]${esc}=)`, "i");
-          const fieldSnippet = extractMatchSnippet(payload, fieldPattern);
+          const fieldSnippet = extractMatchSnippet(payload, fieldPattern(field));
           if (fieldSnippet) {
             locationSnippets.push(fieldSnippet);
             break;
@@ -590,30 +600,31 @@ export default defineBackground(() => {
           type: "location_tracking",
           url: details.url,
           domain,
-          details: [`Location fields: ${locationFields.join(", ")}`],
-          flaggedFields: locationFlaggedFields,
+          labels: ["Location"],
           matchSnippets: locationSnippets,
           payload: payloadPreview,
         });
       }
 
-      if (piiDetails.length > 0) {
-        const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
+      // --- PII tracking alert ---
+      if (piiLabels.length > 0) {
         const piiSnippets: string[] = [];
+
+        /// Snippet for plaintext email address
         const emailSnippet = extractMatchSnippet(payload, EMAIL_RE);
         if (emailSnippet) {
           piiSnippets.push(emailSnippet);
         }
 
-        // For field-name matches, extract a snippet showing the field and its
-        // value so the user can see what triggered the alert (e.g. email).
-        for (const field of flaggedFields) {
-          const esc = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const fieldPattern = new RegExp(`(?:["']${esc}["']\\s*:|[?&]${esc}=)`, "i");
-          const fieldSnippet = extractMatchSnippet(payload, fieldPattern);
-          if (fieldSnippet) {
-            piiSnippets.push(fieldSnippet);
-            break;
+        // One snippet per PII category — multiple fields of the same type
+        // (e.g. email + user_email) would produce redundant snippets.
+        for (const fieldGroup of [emailFields, phoneFields, piiTrackerFields]) {
+          for (const field of fieldGroup) {
+            const fieldSnippet = extractMatchSnippet(payload, fieldPattern(field));
+            if (fieldSnippet) {
+              piiSnippets.push(fieldSnippet);
+              break;
+            }
           }
         }
 
@@ -622,87 +633,38 @@ export default defineBackground(() => {
           type: "pii_exfiltration",
           url: details.url,
           domain,
-          details: piiDetails,
-          flaggedFields,
+          labels: piiLabels,
           matchSnippets: piiSnippets,
           payload: payloadPreview,
         });
       }
 
-      // --- Action tracking check ---
-      // No cookie requirement — a third party receiving behavioural field names
-      // (page URL, click coords, scroll depth, etc.) is tracking the user
-      // regardless of whether a cookie header is present. The cookie flag is
-      // still surfaced as metadata in the POST requests list.
+      // --- Action tracking alert ---
       {
-        const trackingDetails: string[] = [];
-        const trackingFlaggedFields: string[] = [];
-        const trackingSnippets: string[] = [];
+        const actionLabels: string[] = [];
+        const actionSnippets: string[] = [];
 
-        // Simple substring matches against field names — any field name
-        // containing these keywords sent to a third party is considered tracking.
-        const CLICK_RE = /click/i;
-        const SCROLL_RE = /scroll/i;
-        const VIDEO_RE = /video/i;
-        const COORDS_RE = /coord/i;
-        const PAGE_RE = /page|referrer/i;
+        // Only fire when the keyword appears in a field name.
+        // Matching against values produces many false positives.
+        for (const { re, label } of ACTION_CATEGORIES) {
+          const matches = fields.filter(f => re.test(f));
+          if (matches.length > 0) {
+            actionLabels.push(label);
+            const snippet = extractMatchSnippet(payload, re);
+            if (snippet) {
+              actionSnippets.push(snippet);
+            }
+          }
+        }
 
-        // Only fire when each keyword appears in a field *name*.
-        // Matching against values produces too many false positives.
-        const clickMatches = fields.filter(f => CLICK_RE.test(f));
-        if (clickMatches.length > 0) {
-          trackingDetails.push("Clicks");
-          trackingFlaggedFields.push(...clickMatches);
-          const snippet = extractMatchSnippet(payload, CLICK_RE);
-          if (snippet) {
-            trackingSnippets.push(snippet);
-          }
-        }
-        const scrollMatches = fields.filter(f => SCROLL_RE.test(f));
-        if (scrollMatches.length > 0) {
-          trackingDetails.push("Scroll behavior");
-          trackingFlaggedFields.push(...scrollMatches);
-          const snippet = extractMatchSnippet(payload, SCROLL_RE);
-          if (snippet) {
-            trackingSnippets.push(snippet);
-          }
-        }
-        const videoMatches = fields.filter(f => VIDEO_RE.test(f));
-        if (videoMatches.length > 0) {
-          trackingDetails.push("Video playback");
-          trackingFlaggedFields.push(...videoMatches);
-          const snippet = extractMatchSnippet(payload, VIDEO_RE);
-          if (snippet) {
-            trackingSnippets.push(snippet);
-          }
-        }
-        const coordMatches = fields.filter(f => COORDS_RE.test(f));
-        if (coordMatches.length > 0) {
-          trackingDetails.push("Screen coordinates");
-          trackingFlaggedFields.push(...coordMatches);
-          const snippet = extractMatchSnippet(payload, COORDS_RE);
-          if (snippet) {
-            trackingSnippets.push(snippet);
-          }
-        }
-        const pageMatches = fields.filter(f => PAGE_RE.test(f));
-        if (pageMatches.length > 0) {
-          trackingDetails.push("Page visits");
-          trackingFlaggedFields.push(...pageMatches);
-          const snippet = extractMatchSnippet(payload, PAGE_RE);
-          if (snippet) {
-            trackingSnippets.push(snippet);
-          }
-        }
-        if (trackingDetails.length > 0) {
+        if (actionLabels.length > 0) {
           addAlert(details.tabId, {
-            id: details.requestId + "-tracking",
+            id: details.requestId + "-action",
             type: "action_tracking",
             url: details.url,
             domain,
-            details: trackingDetails,
-            flaggedFields: [...new Set(trackingFlaggedFields)],
-            matchSnippets: trackingSnippets,
+            labels: actionLabels,
+            matchSnippets: actionSnippets,
             payload: payloadPreview,
           });
         }
