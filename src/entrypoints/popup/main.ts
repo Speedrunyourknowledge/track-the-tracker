@@ -120,7 +120,7 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
   const securityCookies = thirdParty.filter((c) => c.isSecurityCookie).sort(byDomain);
 
   const thirdPartySummaryStyle = trackers.length > 0
-    ? "cursor:pointer;font-weight:bold;color:#e05320;"
+    ? "cursor:pointer;font-weight:bold;color:#b91c1c;"
     : "cursor:pointer;font-weight:bold;";
 
   const trackerList = trackers.length > 0
@@ -138,18 +138,24 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
     </details>
   ` : "";
 
+  // If there are third-party cookies, open third-party by default and collapse first-party.
+  // Otherwise, open first-party by default.
+  const hasThirdParty = thirdParty.length > 0;
+  const thirdPartyOpen = hasThirdParty ? " open" : "";
+  const firstPartyOpen = hasThirdParty ? "" : " open";
+
   return `
     <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(queriedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
     <p style="font-weight:bold;margin:8px 0 4px;">
       All cookies — ${thirdParty.length} third-party, ${firstParty.length} first-party
     </p>
-    <details open style="margin-top:4px;">
+    <details${thirdPartyOpen} style="margin-top:4px;">
       <summary style="${thirdPartySummaryStyle}">Third-party (${thirdParty.length})</summary>
       ${securitySubsection}
       ${trackerList}
     </details>
-    <details open style="margin-top:4px;">
-      <summary style="cursor:pointer;font-weight:bold;">First-party (${firstParty.length})</summary>
+    <details${firstPartyOpen} style="margin-top:4px;">
+      <summary style="cursor:pointer;font-weight:bold;color:#059669;">First-party (${firstParty.length})</summary>
       ${cookieListHtml(firstParty)}
     </details>`;
 }
