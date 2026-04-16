@@ -112,6 +112,8 @@ export interface GetAlertsMessage {
 /** Response returned by the background for a GET_ALERTS message. */
 export interface GetAlertsResponse {
   alerts: AlertInfo[];
+  /** True when the user has already opened the Requests tab for this page load. */
+  alertsViewed: boolean;
 }
 
 /**

@@ -49,7 +49,7 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
         <summary style="cursor:pointer;font-weight:bold;">
           ${emoji} ${label} <span style="background:#ffedd5;border:1px solid #fed7aa;color:#9a3412;padding:1px 7px;border-radius:10px;font-size:0.75rem;font-weight:normal;">${group.length}</span>
         </summary>
-        <div style="margin-top:6px;padding-left:4px;border-left:2px solid #fed7aa;">
+        <div style="margin-top:6px;padding-left:4px;">
           ${alertItemsHtml(group)}
         </div>
       </details>`;
@@ -256,7 +256,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId }),
     ]);
 
-    const hasAlerts = alertsRes.alerts.length > 0;
+    const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
 
     const alertDot = hasAlerts
       ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`

@@ -44,6 +44,10 @@ const tabPostRequests = new Map<number, PostRequestInfo[]>();
 // as new third-party requests trickle in after the initial page load.
 const tabBadgeState = new Map<number, "cookie" | "pii">();
 
+// Tracks which tabs have had their Requests tab opened at least once during
+// this page load, so the orange dot is not re-shown when the popup reopens.
+const tabAlertsViewed = new Set<number>();
+
 // Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
 const pendingPayloads = new Map<string, string>(); // requestId -> payload string
 
@@ -75,6 +79,7 @@ function clearTabData(tabId: number): void {
   tabAlerts.delete(tabId);
   tabPostRequests.delete(tabId);
   tabBadgeState.delete(tabId);  // reset so fresh indicator can appear on next page
+  tabAlertsViewed.delete(tabId);
 }
 
 function addAlert(tabId: number, alert: AlertInfo): void {
@@ -186,6 +191,17 @@ const LOCATION_FIELD_NAMES = [
   "region",
   "province",
 ];
+
+// Human-readable display names for field names that are abbreviated or ambiguous.
+// This controls how field names appear in the UI.
+const FIELD_DISPLAY_NAMES: Record<string, string> = {
+  lat: "lat (latitude)",
+  lng: "lng (longitude)",
+  geo: "geo (geolocation)",
+  gps: "gps (location)",
+  zip: "zip (postal code)",
+  zip_code: "zip (postal code)",
+};
 
 // Per-tracker field names for known advertising and analytics domains.
 // This catches domain-specific hashed fields
@@ -525,11 +541,11 @@ export default defineBackground(() => {
 
       // Pre-compute tracking fields so they can be highlighted in the POST requests list.
       const ACTION_CATEGORIES = [
-        { re: /click/i, label: "Clicks" },
-        { re: /scroll/i, label: "Scroll behavior" },
-        { re: /video/i, label: "Video playback" },
-        { re: /coord/i, label: "Screen coordinates" },
-        { re: PAGE_RE, label: "Page visits" },
+        { re: /click/i, label: "clicks" },
+        { re: /scroll/i, label: "scroll behavior" },
+        { re: /video/i, label: "video playback" },
+        { re: /coord/i, label: "screen coordinates" },
+        { re: PAGE_RE, label: "page visits" },
       ];
       const actionFields = fields.filter(f => ACTION_CATEGORIES.some(({ re }) => re.test(f)));
 
@@ -558,17 +574,17 @@ export default defineBackground(() => {
       // Email fields
       const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (emailFields.length > 0) {
-        piiLabels.push("Email");
+        piiLabels.push("email");
       }
       // Fall back to regex matching to detect plaintext email addresses
       else if (EMAIL_RE.test(payload)) {
-        piiLabels.push("Email");
+        piiLabels.push("email (plaintext)");
       }
 
       // Phone fields
       const phoneFields = PHONE_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (phoneFields.length > 0) {
-        piiLabels.push("Phone");
+        piiLabels.push("phone");
       }
 
       // Tracker-specific fields (e.g. Facebook "em")
@@ -600,7 +616,7 @@ export default defineBackground(() => {
           type: "location_tracking",
           url: details.url,
           domain,
-          labels: ["Location"],
+          labels: [FIELD_DISPLAY_NAMES[locationFlaggedFields[0]] ?? locationFlaggedFields[0]],
           matchSnippets: locationSnippets,
           payload: payloadPreview,
         });
@@ -774,7 +790,8 @@ export default defineBackground(() => {
       if (msg.type === "GET_ALERTS") {
         const alertsMsg = message as GetAlertsMessage;
         const alerts = tabAlerts.get(alertsMsg.tabId) || [];
-        sendResponse({ alerts });
+        const alertsViewed = tabAlertsViewed.has(alertsMsg.tabId);
+        sendResponse({ alerts, alertsViewed });
         return false;
       }
 
@@ -798,6 +815,9 @@ export default defineBackground(() => {
           // Keep state as "pii" so neither the cookie dot nor the PII badge
           // can reappear for this page load after the user has dismissed it.
         }
+        // Mark alerts as viewed so the orange dot is not re-shown when the
+        // popup is closed and reopened.
+        tabAlertsViewed.add(clearMsg.tabId);
         sendResponse({});
         return false;
       }
