@@ -2,7 +2,14 @@
 //
 // Communicates with the background service worker via chrome.runtime.sendMessage.
 
-import type { GetCookiesMessage, GetCookiesResponse, CookieInfo } from "../../features/cookies/types";
+import type {
+  GetCookiesResponse,
+  CookieInfo,
+  GetAlertsResponse,
+  GetPostRequestsResponse,
+  ClearPiiBadgeMessage,
+  ClearCookieBadgeMessage,
+} from "../../features/cookies/types";
 
 const app = document.getElementById("app")!;
 app.textContent = "Loading cookies…";
@@ -11,13 +18,98 @@ app.textContent = "Loading cookies…";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Top-level renderer — builds the full popup UI from a GetCookiesResponse. */
-function renderCookies(response: GetCookiesResponse): void {
+/** Builds the alerts section HTML string. */
+function buildAlertsHtml(response: GetAlertsResponse): string {
+  const alerts = response.alerts;
+  if (alerts.length === 0) {
+    return "";
+  }
+
+  const piiAlerts      = alerts.filter(a => a.type === "pii_exfiltration");
+  const locationAlerts = alerts.filter(a => a.type === "location_tracking");
+  const trackingAlerts = alerts.filter(a => a.type === "action_tracking");
+
+  function alertItemsHtml(group: typeof alerts): string {
+    return group.map(a => `
+      <div style="margin-bottom: 8px;">
+        <div style="color: #9a3412; margin-top: 2px;">To: <code>${escapeHtml(a.domain)}</code></div>
+        <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
+          ${a.labels.map(l => `<span style="background: #ffedd5; border: 1px solid #fed7aa; color: #9a3412; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem;">${escapeHtml(l)}</span>`).join("")}
+        </div>
+        ${a.matchSnippets.length > 0 ? `<div style="margin-top:5px;">${a.matchSnippets.map(s => `<code style="display:block;font-size:0.7rem;background:#fffbf7;border:1px solid #fed7aa;border-radius:3px;padding:4px 6px;margin-top:2px;word-break:break-all;">${escapeHtml(s)}</code>`).join("")}</div>` : ""}
+      </div>`).join("");
+  }
+
+  function sectionHtml(emoji: string, label: string, group: typeof alerts): string {
+    if (group.length === 0) {
+      return "";
+    }
+    return `
+      <details style="margin-bottom: 8px;">
+        <summary style="cursor:pointer;font-weight:bold;">
+          ${emoji} ${label} <span style="background:#ffedd5;border:1px solid #fed7aa;color:#9a3412;padding:1px 7px;border-radius:10px;font-size:0.75rem;font-weight:normal;">${group.length}</span>
+        </summary>
+        <div style="margin-top:6px;padding-left:4px;">
+          ${alertItemsHtml(group)}
+        </div>
+      </details>`;
+  }
+
+  return `
+    <div style="background-color: #fff7ed; border: 1px solid #f97316; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <h3 style="margin: 0 0 8px 0; color: #c2410c;">⚠️ Privacy Alerts</h3>
+      ${sectionHtml("🛑", "PII Exfiltration", piiAlerts)}
+      ${sectionHtml("📍", "Location Tracking", locationAlerts)}
+      ${sectionHtml("👀", "Action Tracking", trackingAlerts)}
+    </div>`;
+}
+
+/** Builds the third-party POST requests section HTML string. */
+function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
+  const { requests } = response;
+  if (requests.length === 0) {
+    return "";
+  }
+  return `
+    <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
+      <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
+      ${requests.map(r => {
+        const PILL_MAX_CHARS = 24;
+        const pillBase = "display:inline-block;white-space:nowrap;padding:1px 5px;border-radius:10px;font-size:0.72rem;vertical-align:middle;";
+        const fieldTags = r.fields.length > 0
+          ? r.fields.map(f => {
+              const label = f.length > PILL_MAX_CHARS ? f.slice(0, PILL_MAX_CHARS) + "\u2026" : f;
+              const isPii = r.piiFields.includes(f);
+              const isAction = r.actionFields.includes(f);
+              const style = isPii || isAction
+                ? `${pillBase}background:#ffedd5;border:1px solid #f97316;color:#9a3412;`
+                : `${pillBase}background:#f3f4f6;border:1px solid #d1d5db;color:#374151;`;
+              return `<span style="${style}">${escapeHtml(label)}</span>`;
+            }).join(" ")
+          : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
+
+        return `
+          <details style="margin-bottom: 6px;">
+            <summary style="cursor: pointer; word-break: break-all;">
+              <code style="font-size: 0.78rem;${r.hasCookie ? "color:#c2410c;font-weight:bold;" : ""}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
+            </summary>
+            <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
+              <div>URL: <code>${escapeHtml(r.url)}</code></div>
+              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span></div>` : ""}
+              <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
+            </div>
+          </details>
+        `;
+      }).join("")}
+    </div>`;
+}
+
+/** Builds the cookies section HTML string. */
+function buildCookiesHtml(response: GetCookiesResponse): string {
   const { cookies, queriedAt } = response;
 
   if (cookies.length === 0) {
-    app.innerHTML = "<p>No cookies found for this page.</p>";
-    return;
+    return "<p>No cookies found for this page.</p>";
   }
 
   const byDomain = (a: CookieInfo, b: CookieInfo) => a.domain.localeCompare(b.domain);
@@ -27,14 +119,10 @@ function renderCookies(response: GetCookiesResponse): void {
   const trackers = thirdParty.filter((c) => !c.isSecurityCookie).sort(byDomain);
   const securityCookies = thirdParty.filter((c) => c.isSecurityCookie).sort(byDomain);
 
-  // Red only when there are real trackers; security-only third-party cookies
-  // are harmless and don't warrant a red alert.
   const thirdPartySummaryStyle = trackers.length > 0
-    ? "cursor:pointer;font-weight:bold;color:#ef4444;"
+    ? "cursor:pointer;font-weight:bold;color:#b91c1c;"
     : "cursor:pointer;font-weight:bold;";
 
-  // Don't show a redundant "None" for trackers when the only third-party
-  // cookies present are harmless security ones.
   const trackerList = trackers.length > 0
     ? cookieListHtml(trackers)
     : securityCookies.length > 0
@@ -50,28 +138,26 @@ function renderCookies(response: GetCookiesResponse): void {
     </details>
   ` : "";
 
-  app.innerHTML = `
-    <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Queried at ${queriedAt}</p>
+  // If there are third-party cookies, open third-party by default and collapse first-party.
+  // Otherwise, open first-party by default.
+  const hasThirdParty = thirdParty.length > 0;
+  const thirdPartyOpen = hasThirdParty ? " open" : "";
+  const firstPartyOpen = hasThirdParty ? "" : " open";
 
+  return `
+    <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(queriedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
     <p style="font-weight:bold;margin:8px 0 4px;">
       All cookies — ${thirdParty.length} third-party, ${firstParty.length} first-party
     </p>
-
-    <details open style="margin-top:4px;">
-      <summary style="${thirdPartySummaryStyle}">
-        Third-party (${thirdParty.length})
-      </summary>
+    <details${thirdPartyOpen} style="margin-top:4px;">
+      <summary style="${thirdPartySummaryStyle}">Third-party (${thirdParty.length})</summary>
       ${securitySubsection}
       ${trackerList}
     </details>
-
-    <details open style="margin-top:4px;">
-      <summary style="cursor:pointer;font-weight:bold;">
-        First-party (${firstParty.length})
-      </summary>
+    <details${firstPartyOpen} style="margin-top:4px;">
+      <summary style="cursor:pointer;font-weight:bold;color:#059669;">First-party (${firstParty.length})</summary>
       ${cookieListHtml(firstParty)}
-    </details>
-  `;
+    </details>`;
 }
 
 /** Builds an HTML string for a list of CookieInfo objects. */
@@ -146,7 +232,20 @@ function escapeHtml(str: string): string {
 // Main: get the active tab URL + tabId, then ask the background for cookies.
 // ---------------------------------------------------------------------------
 
-chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+function sendMessageAsync<T = unknown>(message: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      }
+ else {
+        resolve(response);
+      }
+    });
+  });
+}
+
+chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
   const tab = tabs[0];
   const url = tab?.url;
   const tabId = tab?.id;
@@ -156,13 +255,62 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     return;
   }
 
-  const message: GetCookiesMessage = { type: "GET_COOKIES", url, tabId };
+  try {
+    const [alertsRes, postReqRes, cookiesRes] = await Promise.all([
+      sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId }),
+      sendMessageAsync<GetPostRequestsResponse>({ type: "GET_POST_REQUESTS", tabId }),
+      sendMessageAsync<GetCookiesResponse>({ type: "GET_COOKIES", url, tabId }),
+    ]);
 
-  chrome.runtime.sendMessage(message, (response: GetCookiesResponse) => {
-    if (chrome.runtime.lastError) {
-      app.textContent = `Error: ${chrome.runtime.lastError.message}`;
-      return;
-    }
-    renderCookies(response);
-  });
+    const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
+
+    const alertDot = hasAlerts
+      ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`
+      : "";
+
+    const tabBtnBase = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
+    const tabBtnActive = tabBtnBase + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
+    const tabBtnInactive = tabBtnBase + "color:#555;";
+
+    app.innerHTML = `
+      <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
+        <button id="tab-btn-cookies" style="${tabBtnActive}">Cookies</button>
+        <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
+      </div>
+      <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
+      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes)}</div>
+    `;
+
+    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP.
+    const btnCookies = document.getElementById("tab-btn-cookies")!;
+    const btnRequests = document.getElementById("tab-btn-requests")!;
+    const panelCookies = document.getElementById("panel-cookies")!;
+    const panelRequests = document.getElementById("panel-requests")!;
+
+    btnCookies.addEventListener("click", () => {
+      panelCookies.style.display = "";
+      panelRequests.style.display = "none";
+      btnCookies.setAttribute("style", tabBtnActive);
+      btnRequests.setAttribute("style", tabBtnInactive);
+      // Dismiss the cookie dot now that the user is viewing the cookies tab.
+      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+    });
+
+    btnRequests.addEventListener("click", () => {
+      panelCookies.style.display = "none";
+      panelRequests.style.display = "";
+      btnCookies.setAttribute("style", tabBtnInactive);
+      btnRequests.setAttribute("style", tabBtnActive);
+      // Remove the orange dot once the user has seen the alerts tab.
+      document.getElementById("alert-dot")?.remove();
+      // Dismiss the PII badge now that the user is viewing the alerts.
+      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
+    });
+
+    // The Cookies tab is shown by default on popup open — clear the cookie dot immediately.
+    sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+  }
+  catch (err: unknown) {
+    app.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
 });

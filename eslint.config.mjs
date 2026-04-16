@@ -10,6 +10,10 @@ export default defineConfig(
     languageOptions: { globals: globals.browser },
   },
   {
+    files: ["scripts/**"],
+    languageOptions: { globals: globals.node },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'curly': ['error', 'all'],
