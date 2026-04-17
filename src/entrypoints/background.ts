@@ -130,7 +130,7 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
 // Auth request detection
 // ---------------------------------------------------------------------------
 
-// OAuth 2.0 / OpenID Connect payload fields (RFC 6749, RFC 7523).
+// OAuth 2.0 / OpenID Connect payload fields (RFC 6749, RFC 7523) and SAML fields.
 // If a POST body contains any of these, it is almost certainly an auth
 // handshake, not a tracking call — regardless of which domain it goes to.
 const AUTH_PAYLOAD_FIELDS = [
@@ -139,13 +139,16 @@ const AUTH_PAYLOAD_FIELDS = [
   "assertion",     // JWT bearer assertion (RFC 7523)
   "id_token",      // OpenID Connect identity token
   "refresh_token", // OAuth 2.0 refresh token exchange
+  "code_verifier", // PKCE — unambiguously part of an OAuth code exchange
+  "SAMLResponse",  // SAML 2.0 SP-initiated SSO response
+  "SAMLRequest",   // SAML 2.0 IdP-initiated SSO request
 ];
 
-// Match /oauth and /oauth2 path prefixes only. We intentionally exclude
-// broader terms like /token or /login because those appear in tracker
-// endpoint paths too (e.g. /api/get-token-info, /events/user-login-actions).
-// The payload field check below handles those auth flows instead.
-const AUTH_PATH_RE = /\/oauth2?(?:\/|$)/i;
+// Matches /oauth, /oauth2, /saml path prefixes, and the /connect/token path
+// used by IdentityServer and common OIDC providers. Broader terms like /token
+// or /login are intentionally excluded — they appear in tracker endpoint paths
+// too (e.g. /api/get-token-info). The payload field check handles those flows.
+const AUTH_PATH_RE = /\/oauth2?(?:\/|$)|\/saml(?:\/|$)|\/connect\/token(?:\/|$)/i;
 
 // Matches page-visit fields while excluding generic fields like "pageFormat"
 const PAGE_RE = /^page(?:s|url|_url|path|_path|title|_title|view|_view|name|_name|ref|_ref|referrer|_referrer|hit|_hit)?$|^referrer(?:url|_url)?$/i;
