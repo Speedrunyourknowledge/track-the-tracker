@@ -1,12 +1,10 @@
 /**
- * securityCookies.ts
- *
  * Identifies known harmless third-party security/anti-abuse cookies that
  * should not be treated as tracking cookies.
  *
  * Currently covers Google's abuse-exemption cookies (AEC, __Secure-YEC,
  * __Secure-YENID), which are security tokens used to prevent fraud and bot
- * traffic — not behavioral trackers.
+ * traffic — not behavioral trackers
  */
 
 import { getDomain } from "tldts";
@@ -21,7 +19,7 @@ import { getDomain } from "tldts";
  * __Secure-YEC / __Secure-YENID — YouTube-specific anti-abuse variants.
  * DV — device-verification token used to confirm legitimate device identity.
  * __Secure-BUCKET — server-side routing/load-balancing assignment (infrastructure).
- * __Secure-STRP — session security strip token.
+ * __Secure-STRP — session security strip token
  */
 const GOOGLE_SECURITY_COOKIE_NAMES = new Set([
   "AEC",
@@ -35,8 +33,8 @@ const GOOGLE_SECURITY_COOKIE_NAMES = new Set([
 
 /**
  * Returns true if the cookie is a known harmless security/anti-abuse token.
- * A false result does NOT mean the cookie is a tracker — only that it is not
- * on the known-harmless allowlist.
+ * A false result does not mean the cookie is a tracker — only that it is not
+ * on the known-harmless allowlist
  */
 export function isSecurityCookie(name: string, domain: string): boolean {
   const cleanDomain = domain.replace(/^\./, "");

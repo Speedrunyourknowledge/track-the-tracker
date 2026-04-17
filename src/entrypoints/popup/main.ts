@@ -1,6 +1,7 @@
-// Popup entry — runs when the user clicks the extension icon.
-//
-// Communicates with the background service worker via chrome.runtime.sendMessage.
+/**
+ * Popup entry — runs when the user clicks the extension icon.
+ * Communicates with the background service worker via chrome.runtime.sendMessage
+ */
 
 import type {
   GetCookiesResponse,
@@ -229,7 +230,7 @@ function escapeHtml(str: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Main: get the active tab URL + tabId, then ask the background for cookies.
+// Main: get the active tab URL + tabId, then ask the background for cookies
 // ---------------------------------------------------------------------------
 
 function sendMessageAsync<T = unknown>(message: unknown): Promise<T> {

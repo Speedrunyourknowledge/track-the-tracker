@@ -1,14 +1,14 @@
-// Service worker — runs persistently in the background.
-//
-// WHY THE BACKGROUND?
-// chrome.cookies and chrome.webRequest are privileged APIs that Chrome only
-// exposes to the background service worker (not to popups or content scripts).
-// Every cookie read/write in this extension must go through here.
-//
-// LIFECYCLE NOTE:
-// Manifest V3 service workers can be terminated by Chrome when idle and
-// re-spawned on demand. Do not rely on in-memory state surviving between
-// activations — use chrome.storage if you need persistence.
+/**
+ * Service worker — runs persistently in the background.
+ *
+ * chrome.cookies and chrome.webRequest are privileged APIs that Chrome only
+ * exposes to the background service worker (not to popups or content scripts).
+ * Every cookie read/write in this extension must go through here.
+ *
+ * Manifest V3 service workers can be terminated by Chrome when idle and
+ * re-spawned on demand. Do not rely on in-memory state surviving between
+ * activations — use chrome.storage if you need persistence
+ */
 
 import { getDomain } from "tldts";
 import { queryCookiesWithThirdParty } from "../features/cookies/cookieQuery";
@@ -41,11 +41,11 @@ const tabPostRequests = new Map<number, PostRequestInfo[]>();
 // Tracks the current badge state per tab so the cookie indicator is only
 // shown once per page load ("cookie" | "pii").  Once either badge is set
 // further updateBadge calls are ignored, preventing repeated notifications
-// as new third-party requests trickle in after the initial page load.
+// as new third-party requests trickle in after the initial page load
 const tabBadgeState = new Map<number, "cookie" | "pii">();
 
 // Tracks which tabs have had their Requests tab opened at least once during
-// this page load, so the orange dot is not re-shown when the popup reopens.
+// this page load, so the orange dot is not re-shown when the popup reopens
 const tabAlertsViewed = new Set<number>();
 
 // Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
@@ -61,7 +61,7 @@ const PAYLOAD_PREVIEW_MAX_CHARS = 500;
  * For JSON objects: parses and re-serializes up to PAYLOAD_PREVIEW_MAX_KEYS
  * top-level keys, so the stored value is always valid JSON regardless of
  * original payload size.
- * For non-JSON: falls back to a raw character slice.
+ * For non-JSON: falls back to a raw character slice
  */
 function buildPayloadPreview(payload: string): string {
   try {
@@ -115,7 +115,7 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
         existing.actionFields.push(f);
       }
     }
-    // If any occurrence sent a cookie, mark the entry as cookie-linked.
+    // If any occurrence sent a cookie, mark the entry as cookie-linked
     if (req.hasCookie) {
       existing.hasCookie = true;
     }
@@ -132,7 +132,7 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
 
 // OAuth 2.0 / OpenID Connect payload fields (RFC 6749, RFC 7523) and SAML fields.
 // If a POST body contains any of these, it is almost certainly an auth
-// handshake, not a tracking call — regardless of which domain it goes to.
+// handshake, not a tracking call — regardless of which domain it goes to
 const AUTH_PAYLOAD_FIELDS = [
   "grant_type",    // present in every OAuth 2.0 token request
   "client_secret", // OAuth client credential
@@ -147,7 +147,7 @@ const AUTH_PAYLOAD_FIELDS = [
 // Matches /oauth, /oauth2, /saml path prefixes, and the /connect/token path
 // used by IdentityServer and common OIDC providers. Broader terms like /token
 // or /login are intentionally excluded — they appear in tracker endpoint paths
-// too (e.g. /api/get-token-info). The payload field check handles those flows.
+// too (e.g. /api/get-token-info). The payload field check handles those flows
 const AUTH_PATH_RE = /\/oauth2?(?:\/|$)|\/saml(?:\/|$)|\/connect\/token(?:\/|$)/i;
 
 // Matches page-visit fields while excluding generic fields like "pageFormat"
@@ -196,7 +196,7 @@ const LOCATION_FIELD_NAMES = [
 ];
 
 // Human-readable display names for field names that are abbreviated or ambiguous.
-// This controls how field names appear in the UI.
+// This controls how field names appear in the UI
 const FIELD_DISPLAY_NAMES: Record<string, string> = {
   lat: "lat (latitude)",
   lng: "lng (longitude)",
@@ -210,13 +210,13 @@ const FIELD_DISPLAY_NAMES: Record<string, string> = {
 // This catches domain-specific hashed fields
 const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
   // Facebook CAPI — short fields are Meta-specific abbreviations,
-  // too ambiguous to flag generically without the domain context.
+  // too ambiguous to flag generically without the domain context
   "facebook.com": {
     label: "Facebook",
     fields: ["em", "ph", "fn", "ln", "db", "ge", "external_id"],
   },
   // Google Analytics 4 enhanced conversions — ep.email is a GA4-specific
-  // event parameter; sha256_* variants are already in the generic lists.
+  // event parameter; sha256_* variants are already in the generic lists
   "google-analytics.com": {
     label: "Google Analytics",
     fields: ["ep.email"],
@@ -226,13 +226,13 @@ const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
     fields: ["ep.email"],
   },
   // TikTok Events API — email/phone_number covered generically; external_id is
-  // TikTok's persistent user identifier.
+  // TikTok's persistent user identifier
   "tiktok.com": {
     label: "TikTok",
     fields: ["external_id"],
   },
   // Snapchat — em/ph are Meta-style abbreviations also used by Snap;
-  // madid is the Mobile Ad ID (IDFA/GAID).
+  // madid is the Mobile Ad ID (IDFA/GAID)
   "snap.com": {
     label: "Snapchat",
     fields: ["em", "ph", "madid"],
@@ -248,7 +248,7 @@ const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
     fields: ["em", "ph"],
   },
   // X (Twitter) Conversions API — twclid ties a conversion back to a specific
-  // Twitter ad click.
+  // Twitter ad click
   "twitter.com": {
     label: "X (Twitter)",
     fields: ["twclid"],
@@ -257,7 +257,7 @@ const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
     label: "X (Twitter)",
     fields: ["twclid"],
   },
-  // Reddit Pixel — idfa/aaid are iOS/Android device advertising IDs.
+  // Reddit Pixel — idfa/aaid are iOS/Android device advertising IDs
   "redditmedia.com": {
     label: "Reddit",
     fields: ["external_id", "idfa", "aaid"],
@@ -278,7 +278,7 @@ function flexibleField(name: string): string {
 
 /**
  * Builds a regex that matches `field` as a key in either URL-encoded
- * (key=value) or JSON ("key": value) format.
+ * (key=value) or JSON ("key": value) format
  */
 function fieldPattern(field: string): RegExp {
   const flex = flexibleField(field);
@@ -287,7 +287,7 @@ function fieldPattern(field: string): RegExp {
 
 /**
  * Returns true if `field` appears as a key in the payload, handling both
- * URL-encoded (key=value) and JSON ("key": value) formats.
+ * URL-encoded (key=value) and JSON ("key": value) formats
  */
 function hasField(payload: string, field: string): boolean {
   return fieldPattern(field).test(payload);
@@ -298,7 +298,7 @@ function hasField(payload: string, field: string): boolean {
  * For JSON, collects keys from the root object and 2 levels deeper (i.e.
  * root keys, their children's keys, and their grandchildren's keys).
  * For URL-encoded payloads, returns each parameter name.
- * Capped at 20 keys to keep the UI manageable.
+ * Capped at 20 keys to keep the UI manageable
  */
 function extractFields(payload: string): string[] {
   const keys = new Set<string>();
@@ -351,7 +351,7 @@ function extractFields(payload: string): string[] {
 /**
  * Returns true if the request looks like an authentication handshake.
  * Uses OAuth payload fields and path heuristics rather than a domain
- * allowlist, so it works across all identity providers.
+ * allowlist, so it works across all identity providers
  */
 function isAuthRequest(url: string, payload: string): boolean {
   try {
@@ -369,7 +369,7 @@ function isAuthRequest(url: string, payload: string): boolean {
 /**
  * Extracts a short text snippet centered on the first match of pattern in
  * payload, with up to 25 chars of context on each side.
- * Returns an empty string if there is no match.
+ * Returns an empty string if there is no match
  */
 function extractMatchSnippet(payload: string, pattern: RegExp): string {
   const match = pattern.exec(payload);
@@ -416,7 +416,7 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
  * Updates the extension icon badge for a specific tab.
  * A yellow dot appears once when third-party tracking cookies are first
  * detected, alerting the user without repeatedly retriggering as more
- * requests arrive.  Passing count=0 clears the badge (e.g. on navigation).
+ * requests arrive.  Passing count=0 clears the badge (e.g. on navigation)
  */
 function updateBadge(tabId: number, count: number): void {
   if (count > 0) {
@@ -438,7 +438,7 @@ function updateBadge(tabId: number, count: number): void {
  * Switches the badge to orange with a "!" to signal an active PII alert.
  * Takes priority over the yellow cookie-dot badge so the user notices
  * something more serious than a tracking cookie was detected.
- * Resets naturally on the next navigation when updateBadge() runs again.
+ * Resets naturally on the next navigation when updateBadge() runs again
  */
 function setPiiBadge(tabId: number): void {
   chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
@@ -449,7 +449,7 @@ function setPiiBadge(tabId: number): void {
 }
 
 // Per-tab debounce timers so the badge updates after the burst of webRequest
-// events following page load settles, rather than only at tabs.onUpdated complete.
+// events following page load settles, rather than only at tabs.onUpdated complete
 const badgeUpdateTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 function scheduleBadgeUpdate(tabId: number): void {
@@ -485,7 +485,7 @@ export default defineBackground(() => {
   // For each completed request, we check whether its domain differs from the
   // page that initiated it (the initiator). If so, it's a third-party request
   // and we record the origin so the cookie query layer can later fetch cookies
-  // stored under that domain.
+  // stored under that domain
   // -------------------------------------------------------------------------
   // PAYLOAD INTERCEPTION — Detect PII and Tracking in POST requests
   // -------------------------------------------------------------------------
@@ -510,13 +510,13 @@ export default defineBackground(() => {
       }
 
       // Only analyze third-party requests — first-party POST requests (e.g.
-      // submitting a form to your own site) are not a privacy concern.
+      // submitting a form to your own site) are not a privacy concern
       if (!details.initiator || !isThirdPartyRequest(details.url, details.initiator)) {
         return;
       }
 
       // Skip binary requests (gRPC, protobuf, raw byte streams). These are
-      // typically internal service calls and they are not useful for analysis.
+      // typically internal service calls and they are not useful for analysis
       const contentType = details.requestHeaders
         ?.find((h) => h.name.toLowerCase() === "content-type")
         ?.value ?? "";
@@ -525,8 +525,8 @@ export default defineBackground(() => {
         return;
       }
 
-      // Skip authentication handshakes (e.g., OAuth tokens) so 
-      // legitimate "Sign in with Google"-style flows are not flagged.
+      // Skip authentication handshakes (e.g., OAuth tokens) so
+      // legitimate "Sign in with Google"-style flows are not flagged
       if (isAuthRequest(details.url, payload)) {
         return;
       }
@@ -542,7 +542,7 @@ export default defineBackground(() => {
         allPiiFieldNames.some((p) => p.toLowerCase() === f.toLowerCase())
       );
 
-      // Pre-compute tracking fields so they can be highlighted in the POST requests list.
+      // Pre-compute tracking fields so they can be highlighted in the POST requests list
       const ACTION_CATEGORIES = [
         { re: /click/i, label: "clicks" },
         { re: /scroll/i, label: "scroll behavior" },
@@ -553,12 +553,12 @@ export default defineBackground(() => {
       const actionFields = fields.filter(f => ACTION_CATEGORIES.some(({ re }) => re.test(f)));
 
       // True when the request includes a Cookie header — the third party can
-      // tie this POST to a persistent identity stored on the user's browser.
+      // tie this POST to a persistent identity stored on the user's browser
       const hasCookie = details.requestHeaders?.some(
         (h) => h.name.toLowerCase() === "cookie"
       ) ?? false;
 
-      // Record every third-party non-auth POST so the user can inspect them.
+      // Record every third-party non-auth POST so the user can inspect them
       addPostRequest(details.tabId, {
         id: details.requestId,
         url: details.url,
@@ -629,7 +629,7 @@ export default defineBackground(() => {
       if (piiLabels.length > 0) {
         const piiSnippets: string[] = [];
 
-        /// Snippet for plaintext email address
+        // Snippet for plaintext email address
         const emailSnippet = extractMatchSnippet(payload, EMAIL_RE);
         if (emailSnippet) {
           piiSnippets.push(emailSnippet);

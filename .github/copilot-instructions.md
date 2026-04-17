@@ -66,13 +66,13 @@ Add a comment above every significant function and every non-obvious logical flo
 
 ### File-level comments
 
-Every custom file (non-boilerplate) should begin with a JSDoc comment explaining its purpose. Keep it to 2–3 lines.
+Every custom file (non-boilerplate) should begin with a JSDoc comment explaining its purpose. Keep it to 1–3 lines.
 
 ```ts
 // ✅ Correct
 /**
  * Utility functions for validating and sanitizing user input.
- * Ensures values meet expected formats before being passed to the rest of the app.
+ * Ensures values meet expected formats before being passed to the rest of the app
  */
 ```
 
