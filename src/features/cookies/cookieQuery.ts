@@ -13,6 +13,29 @@ import { isSecurityCookie } from "./securityCookies";
 // Helpers
 // ---------------------------------------------------------------------------
 
+// How long to wait for a single chrome.cookies.getAll call before giving up.
+// The cookie store can be locked by heavy writes, causing reads to stall indefinitely
+const COOKIES_GETALL_TIMEOUT_MS = 4000;
+
+// Return type for getAllWithTimeout — separates a real empty result from a timeout
+interface GetAllResult {
+  cookies: chrome.cookies.Cookie[];
+  timedOut: boolean;
+}
+
+/**
+ * Wraps chrome.cookies.getAll with a timeout so a stalled cookie-store lock
+ * can't hang the caller forever. Returns timedOut: true if the deadline is exceeded
+ */
+function getAllWithTimeout(details: chrome.cookies.GetAllDetails): Promise<GetAllResult> {
+  return Promise.race([
+    chrome.cookies.getAll(details).then((cookies) => ({ cookies, timedOut: false })),
+    new Promise<GetAllResult>((resolve) =>
+      setTimeout(() => resolve({ cookies: [], timedOut: true }), COOKIES_GETALL_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 /**
  * Formats a Unix timestamp (seconds) into a readable date string.
  * Returns "Session" for cookies with no expiry set
@@ -94,28 +117,33 @@ export async function queryCookiesWithThirdParty(
   tabId: number,
 ): Promise<CookieQueryResult> {
   // First-party cookies — all match the page domain, so isThirdParty is false
-  const rawFirstParty = await chrome.cookies.getAll({ url: pageUrl });
+  const { cookies: rawFirstParty, timedOut: firstPartyTimedOut } = await getAllWithTimeout({ url: pageUrl });
   const firstPartyCookies: CookieInfo[] = rawFirstParty.map((c) => ({
     ...mapCookie(c, pageUrl),
     isThirdParty: false,
   }));
 
   // Third-party cookies — one getAll call per observed third-party origin
-  const origins = await getThirdPartyOrigins(tabId);
-  const thirdPartyGroups = await Promise.all(
+  const origins = getThirdPartyOrigins(tabId);
+  const thirdPartyResults = await Promise.all(
     origins.map(async (origin) => {
-      const raw = await chrome.cookies.getAll({ url: origin });
-      return raw.map((c): CookieInfo => ({
-        ...mapCookie(c, pageUrl),
-        isThirdParty: true,
-      }));
+      const { cookies: raw, timedOut } = await getAllWithTimeout({ url: origin });
+      return {
+        cookies: raw.map((c): CookieInfo => ({
+          ...mapCookie(c, pageUrl),
+          isThirdParty: true,
+        })),
+        timedOut,
+      };
     }),
   );
+
+  const timedOut = firstPartyTimedOut || thirdPartyResults.some((r) => r.timedOut);
 
   // Merge, deduplicating on (name, domain) — first-party entry wins if both exist
   const seen = new Set<string>();
   const allCookies: CookieInfo[] = [];
-  for (const c of [...firstPartyCookies, ...thirdPartyGroups.flat()]) {
+  for (const c of [...firstPartyCookies, ...thirdPartyResults.flatMap((r) => r.cookies)]) {
     const key = `${c.name}|${c.domain}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -123,5 +151,6 @@ export async function queryCookiesWithThirdParty(
     }
   }
 
-  return { cookies: allCookies, queriedAt: new Date().toISOString() };
+  return { cookies: allCookies, queriedAt: new Date().toISOString(), timedOut };
 }
+

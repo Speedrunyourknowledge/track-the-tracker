@@ -38,6 +38,11 @@ The extension icon shows a `!` badge when tracking activity is detected on the a
 
 The badge is cleared when the user opens the relevant tab in the popup.
 
+**Badge update behavior:**
+- The yellow badge fires **once per page load**. After it has been set, additional third-party cookie detections for the same page don't re-trigger it, preventing notification spam.
+- The orange badge fires **every time a new PII or location alert is detected**, and takes priority over the yellow badge.
+- Both states reset on navigation, so each new page load starts fresh.
+
 ## Project Structure
 
 [WXT](https://wxt.dev/guide/essentials/project-structure) is used to package the source code into the final extension.
@@ -78,14 +83,22 @@ wxt.config.ts          # Extension manifest & permissions
 
 ## Getting Started
 
-### Prerequisites
+### Install as an extension
 
+By installing the extension, you can use it during normal browsing.
+
+#### Option A — Download the pre-built zip
+
+1. Download the `.zip` from the [latest GitHub Release](releases/latest) and extract it
+2. Open Chrome and go to `chrome://extensions`
+3. Enable **Developer mode** (toggle in the top-right corner)
+4. Click **Load unpacked** and select the folder extracted from the zip
+
+#### Option B — Build from source
+
+Prerequisites
 - Node.js ≥ 18
 - npm ≥ 9
-
-### Install as an extension (recommended)
-
-This method allows you to use the extension during normal browsing
 
 1. Clone the repo and install dependencies:
    ```bash
@@ -101,9 +114,7 @@ This method allows you to use the extension during normal browsing
 4. Enable **Developer mode** (toggle in the top-right corner)
 5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder (generated during the build step)
 
-The extension is now installed and behaves identically to a Chrome Web Store install.
-
-> Alternatively, download the pre-built `.zip` from the [latest GitHub Release](../../releases/latest), extract it, and follow steps 3–5 above, pointing to the extracted folder instead.
+Both options produce an identical install.
 
 ### Pin the extension
 

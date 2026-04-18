@@ -13,7 +13,6 @@ import {
 } from "../features/cookies/thirdPartyDomains";
 import type {
   GetCookiesMessage,
-  GetCookiesResponse,
   AlertInfo,
   GetAlertsMessage,
   PostRequestInfo,
@@ -384,32 +383,43 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
 
 // Updates the extension icon badge for a specific tab.
 // A yellow dot appears once when third-party tracking cookies are first detected.
-// Passing count=0 clears the badge (e.g. on navigation)
-function updateBadge(tabId: number, count: number): void {
-  if (count > 0) {
-    // Only show the indicator once per page load — if a badge is already
-    // visible (cookie or higher-priority PII) don't overwrite or re-trigger
-    if (!tabBadgeState.has(tabId)) {
-      chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
-      chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-      chrome.action.setBadgeText({ text: "!", tabId });
-      tabBadgeState.set(tabId, "cookie");
+// Passing count=0 clears the badge (e.g. on navigation).
+// Errors are silently ignored — the tab may have been closed before this runs
+async function updateBadge(tabId: number, count: number): Promise<void> {
+  try {
+    if (count > 0) {
+      // Only show the indicator once per page load — if a badge is already
+      // visible (cookie or higher-priority PII) don't overwrite or re-trigger
+      if (!tabBadgeState.has(tabId)) {
+        await chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
+        await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+        await chrome.action.setBadgeText({ text: "!", tabId });
+        tabBadgeState.set(tabId, "cookie");
+      }
+    }
+    else {
+      await chrome.action.setBadgeText({ text: "", tabId });
     }
   }
-  else {
-    chrome.action.setBadgeText({ text: "", tabId });
+  catch {
+    // Tab closed before the badge update ran
   }
 }
 
 // Switches the badge to orange with "!" to signal an active PII alert.
 // Takes priority over the yellow cookie-dot so the user notices something
 // more serious than a tracking cookie was detected
-function setPiiBadge(tabId: number): void {
-  chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
-  chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-  chrome.action.setBadgeText({ text: "!", tabId });
-  // Mark as pii so subsequent cookie-badge calls don't overwrite this alert
-  tabBadgeState.set(tabId, "pii");
+async function setPiiBadge(tabId: number): Promise<void> {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
+    await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+    await chrome.action.setBadgeText({ text: "!", tabId });
+    // Mark as pii so subsequent cookie-badge calls don't overwrite this alert
+    tabBadgeState.set(tabId, "pii");
+  }
+  catch {
+    // Tab closed before the badge update ran
+  }
 }
 
 // Per-tab debounce timers so the badge updates after the burst of webRequest
@@ -529,7 +539,10 @@ export default defineBackground(() => {
 
       // --- PII check ---
       const piiLabels: string[] = [];
-      const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
+
+      // Requires a value-start delimiter before and a value-end delimiter after the address.
+      // Real emails in POST bodies are always delimited; opaque binary data is not
+      const EMAIL_RE = /(?:^|(?<=["'=&,;\s]))[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9.-]{2,}\.[a-zA-Z]{2,6}(?=["'&,;\s]|$)/;
 
       // Email fields
       const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
@@ -670,17 +683,12 @@ export default defineBackground(() => {
       try {
         if (isThirdPartyRequest(details.url, details.initiator)) {
           const requestOrigin = new URL(details.url).origin;
-          recordThirdPartyOrigin(details.tabId, requestOrigin)
-            .then((isNew) => {
-              if (isNew) {
-                scheduleBadgeUpdate(details.tabId);
-              }
-            })
-            .catch((err) =>
-              console.error("[Track the Tracker] Failed to record third-party origin:", err),
-            );
+          const isNew = recordThirdPartyOrigin(details.tabId, requestOrigin);
+          if (isNew) {
+            scheduleBadgeUpdate(details.tabId);
+          }
         }
-      } 
+      }
       catch {
         // Ignore unparseable URLs
       }
@@ -708,9 +716,7 @@ export default defineBackground(() => {
 
     if (changeInfo.status === "loading") {
       clearTabData(tabId);
-      clearThirdPartyOrigins(tabId).catch((err) =>
-        console.error("[Track the Tracker] Failed to clear third-party origins:", err),
-      );
+      clearThirdPartyOrigins(tabId);
       return;
     }
 
@@ -730,10 +736,8 @@ export default defineBackground(() => {
   // CLEANUP — remove storage entries when a tab is closed
   // -------------------------------------------------------------------------
   chrome.tabs.onRemoved.addListener((tabId) => {
-      clearTabData(tabId);
-    clearThirdPartyOrigins(tabId).catch((err) =>
-      console.error("[Track the Tracker] Third-party origin cleanup failed:", err),
-    );
+    clearTabData(tabId);
+    clearThirdPartyOrigins(tabId);
     updateBadge(tabId, 0);
   });
 
@@ -793,25 +797,19 @@ export default defineBackground(() => {
         return false;
       }
 
-      if (msg.type !== "GET_COOKIES") {
-        return false;
+      if (msg.type === "GET_COOKIES") {
+        const cookieMessage = message as GetCookiesMessage;
+        queryCookiesWithThirdParty(cookieMessage.url, cookieMessage.tabId)
+          .then((result): void => {
+            sendResponse({ cookies: result.cookies, queriedAt: result.queriedAt, timedOut: result.timedOut });
+          })
+          .catch((): void => {
+            sendResponse({ cookies: [], queriedAt: new Date().toISOString(), timedOut: true });
+          });
+        return true; // keep channel open for async sendResponse
       }
 
-      const cookieMessage = message as GetCookiesMessage;
-      queryCookiesWithThirdParty(cookieMessage.url, cookieMessage.tabId)
-        .then((result) => {
-          const response: GetCookiesResponse = {
-            cookies: result.cookies,
-            queriedAt: result.queriedAt,
-          };
-          sendResponse(response);
-        })
-        .catch((err) => {
-          console.error("[Track the Tracker] Cookie query failed:", err);
-          sendResponse({ cookies: [], queriedAt: new Date().toISOString() });
-        });
-
-      return true; // Keep message channel open for async response
+      return false;
     },
   );
 });

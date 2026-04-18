@@ -65,6 +65,8 @@ export interface CookieInfo {
 export interface CookieQueryResult {
   cookies: CookieInfo[];
   queriedAt: string;
+  /** True if any chrome.cookies.getAll call hit the timeout deadline */
+  timedOut: boolean;
 }
 
 /** Message sent from the popup (or any context) to the background */
@@ -85,6 +87,8 @@ export interface GetCookiesResponse {
   cookies: CookieInfo[];
   /** ISO timestamp of when the query ran */
   queriedAt: string;
+  /** True if any cookie store query hit the timeout deadline — results may be incomplete */
+  timedOut: boolean;
 }
 
 /** Alert patterns detected by analyzing POST payloads */
