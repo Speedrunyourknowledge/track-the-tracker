@@ -1,9 +1,7 @@
 /**
- * cookieQuery.ts
- *
  * Core logic for querying the browser's cookie jar.
- * Must only be imported from the background service worker, because
- * chrome.cookies is a privileged API not available to content scripts or popups.
+ * Only import this from the background service worker — chrome.cookies is a
+ * privileged API not available to content scripts or popups
  */
 
 import { getDomain } from "tldts";
@@ -17,7 +15,7 @@ import { isSecurityCookie } from "./securityCookies";
 
 /**
  * Formats a Unix timestamp (seconds) into a readable date string.
- * Returns "Session" for cookies with no expiry set.
+ * Returns "Session" for cookies with no expiry set
  */
 function formatExpiry(expirationDate: number | undefined): string {
   if (expirationDate === undefined) {
@@ -31,7 +29,7 @@ function formatExpiry(expirationDate: number | undefined): string {
  * Maps a raw chrome.cookies.Cookie to a CookieInfo, using the page URL for
  * the third-party check. When the caller already knows whether a cookie is
  * third-party (because it came from a third-party origin query), they should
- * override the isThirdParty field after calling this.
+ * override the isThirdParty field after calling this
  */
 function mapCookie(c: chrome.cookies.Cookie, pageUrl: string): CookieInfo {
   return {
@@ -81,18 +79,15 @@ function isThirdPartyCookieDomain(cookieDomain: string, pageUrl: string): boolea
 
 /**
  * Queries the browser cookie jar for all cookies visible to the given URL,
- * PLUS cookies from any third-party origins that were observed via webRequest
- * for this tab.
+ * plus cookies from any third-party origins observed via webRequest for this tab.
  *
- * WHY TWO QUERIES ARE NEEDED:
- * chrome.cookies.getAll({ url }) returns only cookies whose domain matches the
- * page URL — i.e. first-party cookies. Third-party tracker cookies (e.g. from
- * .doubleclick.net or .google-analytics.com) are stored under their own domain
- * and are never returned by a single-URL query. To surface them we track which
- * third-party origins are contacted via webRequest and query each one separately.
+ * Two queries are needed because chrome.cookies.getAll({ url }) only returns
+ * cookies whose domain matches the page URL (first-party). Third-party tracker
+ * cookies (e.g. .doubleclick.net) are stored under their own domain and require
+ * a separate getAll call per observed origin.
  *
  * @param pageUrl - Full URL of the current page.
- * @param tabId   - Chrome tab ID, used to look up observed third-party origins.
+ * @param tabId   - Chrome tab ID, used to look up observed third-party origins
  */
 export async function queryCookiesWithThirdParty(
   pageUrl: string,

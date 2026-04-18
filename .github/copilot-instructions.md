@@ -59,3 +59,27 @@ for (const item of list) process(item);
 // ❌ Wrong — do not use single-line blocks
 for (const item of list) { process(item); }
 ```
+
+## Comment Style
+
+Add a comment above every significant function and every non-obvious logical flow.
+
+### File-level comments
+
+Every custom file (non-boilerplate) should begin with a JSDoc comment explaining its purpose. Keep it to 1–3 lines.
+
+```ts
+// ✅ Correct
+/**
+ * Utility functions for validating and sanitizing user input.
+ * Ensures values meet expected formats before being passed to the rest of the app
+ */
+```
+
+### Format rules
+
+- Use JSDoc (`/** */`) for exported functions and at the top of every custom file. Use `//` for everything else
+- The last line of a comment never ends with a period. A period is only used to separate sentences within a multi-sentence comment
+- Do not use all-caps emphasis words (MUST, IMPORTANT, etc.)
+- Keep comments concise — one to three lines is almost always enough
+- Do not narrate what the code already makes obvious — if the logic is self-evident, skip the comment or just name the intent in one line

@@ -1,6 +1,7 @@
-// Popup entry — runs when the user clicks the extension icon.
-//
-// Communicates with the background service worker via chrome.runtime.sendMessage.
+/**
+ * Popup entry — runs when the user clicks the extension icon.
+ * Communicates with the background service worker via chrome.runtime.sendMessage
+ */
 
 import type {
   GetCookiesResponse,
@@ -18,7 +19,7 @@ app.textContent = "Loading cookies…";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Builds the alerts section HTML string. */
+// Builds the alerts section HTML string
 function buildAlertsHtml(response: GetAlertsResponse): string {
   const alerts = response.alerts;
   if (alerts.length === 0) {
@@ -64,12 +65,15 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
     </div>`;
 }
 
-/** Builds the third-party POST requests section HTML string. */
-function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
+// Builds the third-party POST requests section HTML string
+function buildPostRequestsHtml(response: GetPostRequestsResponse, alerts: GetAlertsResponse): string {
   const { requests } = response;
   if (requests.length === 0) {
     return "";
   }
+  // Domains that triggered at least one alert — highlighted in the list so
+  // the user knows expanding that row will show the relevant fields
+  const alertedDomains = new Set(alerts.alerts.map(a => a.domain));
   return `
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
       <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
@@ -87,15 +91,17 @@ function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
               return `<span style="${style}">${escapeHtml(label)}</span>`;
             }).join(" ")
           : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
+        const domainStyle = alertedDomains.has(r.domain)
+          ? "font-size: 0.78rem; color: #c2410c; font-weight: bold;"
+          : "font-size: 0.78rem;";
 
         return `
           <details style="margin-bottom: 6px;">
             <summary style="cursor: pointer; word-break: break-all;">
-              <code style="font-size: 0.78rem;${r.hasCookie ? "color:#c2410c;font-weight:bold;" : ""}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
+              <code style="${domainStyle}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
             </summary>
             <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
               <div>URL: <code>${escapeHtml(r.url)}</code></div>
-              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span></div>` : ""}
               <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
             </div>
           </details>
@@ -104,7 +110,7 @@ function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
     </div>`;
 }
 
-/** Builds the cookies section HTML string. */
+// Builds the cookies section HTML string
 function buildCookiesHtml(response: GetCookiesResponse): string {
   const { cookies, queriedAt } = response;
 
@@ -139,7 +145,7 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
   ` : "";
 
   // If there are third-party cookies, open third-party by default and collapse first-party.
-  // Otherwise, open first-party by default.
+  // Otherwise, open first-party by default
   const hasThirdParty = thirdParty.length > 0;
   const thirdPartyOpen = hasThirdParty ? " open" : "";
   const firstPartyOpen = hasThirdParty ? "" : " open";
@@ -160,7 +166,7 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
     </details>`;
 }
 
-/** Builds an HTML string for a list of CookieInfo objects. */
+// Builds an HTML list for a list of CookieInfo objects
 function cookieListHtml(cookies: CookieInfo[]): string {
   if (cookies.length === 0) {
     return "<p style='margin:4px 0;color:#888'>None</p>";
@@ -172,7 +178,7 @@ function cookieListHtml(cookies: CookieInfo[]): string {
       const domain = escapeHtml(c.domain);
       const borderStyle = "border:1px solid #ddd;";
       // If the domain name is long, put it on its own line so the cookie name
-      // gets a full line beneath it.
+      // gets a full line beneath it
       const nameAndDomain = domain.length > 20
         ? `<div style="display:flex;justify-content:flex-end;margin-bottom:2px;">
              <span style="color:#888;white-space:nowrap;">${domain}</span>
@@ -218,7 +224,7 @@ function cookieListHtml(cookies: CookieInfo[]): string {
     .join("");
 }
 
-/** Escapes HTML special characters to prevent XSS from cookie data. */
+// Escapes HTML special characters to prevent XSS from cookie data
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -229,7 +235,7 @@ function escapeHtml(str: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Main: get the active tab URL + tabId, then ask the background for cookies.
+// Main: get the active tab URL + tabId, then ask the background for cookies
 // ---------------------------------------------------------------------------
 
 function sendMessageAsync<T = unknown>(message: unknown): Promise<T> {
@@ -278,10 +284,10 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
       </div>
       <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
-      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes)}</div>
+      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}</div>
     `;
 
-    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP.
+    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP
     const btnCookies = document.getElementById("tab-btn-cookies")!;
     const btnRequests = document.getElementById("tab-btn-requests")!;
     const panelCookies = document.getElementById("panel-cookies")!;
@@ -292,7 +298,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       panelRequests.style.display = "none";
       btnCookies.setAttribute("style", tabBtnActive);
       btnRequests.setAttribute("style", tabBtnInactive);
-      // Dismiss the cookie dot now that the user is viewing the cookies tab.
+      // Dismiss the cookie badge now that the user is viewing the cookies tab
       sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
     });
 
@@ -301,13 +307,13 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       panelRequests.style.display = "";
       btnCookies.setAttribute("style", tabBtnInactive);
       btnRequests.setAttribute("style", tabBtnActive);
-      // Remove the orange dot once the user has seen the alerts tab.
+      // Remove the orange dot once the user has seen the alerts tab
       document.getElementById("alert-dot")?.remove();
-      // Dismiss the PII badge now that the user is viewing the alerts.
+      // Dismiss the PII badge now that the user is viewing the alerts
       sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
     });
 
-    // The Cookies tab is shown by default on popup open — clear the cookie dot immediately.
+    // The Cookies tab is shown by default on popup open — clear the cookie badge immediately
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
   }
   catch (err: unknown) {
