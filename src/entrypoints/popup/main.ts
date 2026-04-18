@@ -238,13 +238,20 @@ function escapeHtml(str: string): string {
 // Main: get the active tab URL + tabId, then ask the background for cookies
 // ---------------------------------------------------------------------------
 
-function sendMessageAsync<T = unknown>(message: unknown): Promise<T> {
+function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 10000): Promise<T> {
   return new Promise((resolve, reject) => {
+    // Guard against the MV3 service worker being killed mid-request without
+    // Chrome firing lastError — in that case the callback would never run
+    const timer = setTimeout(
+      () => reject(new Error("Extension response timed out. Try reopening the popup.")),
+      timeoutMs
+    );
     chrome.runtime.sendMessage(message, (response) => {
+      clearTimeout(timer);
       if (chrome.runtime.lastError) {
         reject(chrome.runtime.lastError);
       }
- else {
+      else {
         resolve(response);
       }
     });

@@ -78,14 +78,22 @@ wxt.config.ts          # Extension manifest & permissions
 
 ## Getting Started
 
-### Prerequisites
+### Install as an extension
 
+By installing the extension, you can use it during normal browsing.
+
+#### Option A — Download the pre-built zip (no prerequisites)
+
+1. Download the `.zip` from the [latest GitHub Release](releases/latest) and extract it
+2. Open Chrome and go to `chrome://extensions`
+3. Enable **Developer mode** (toggle in the top-right corner)
+4. Click **Load unpacked** and select the extracted folder
+
+#### Option B — Build from source
+
+Prerequisites
 - Node.js ≥ 18
 - npm ≥ 9
-
-### Install as an extension (recommended)
-
-This method allows you to use the extension during normal browsing
 
 1. Clone the repo and install dependencies:
    ```bash
@@ -99,11 +107,9 @@ This method allows you to use the extension during normal browsing
    ```
 3. Open Chrome and go to `chrome://extensions`
 4. Enable **Developer mode** (toggle in the top-right corner)
-5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder (generated during the build step)
+5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder
 
-The extension is now installed and behaves identically to a Chrome Web Store install.
-
-> Alternatively, download the pre-built `.zip` from the [latest GitHub Release](../../releases/latest), extract it, and follow steps 3–5 above, pointing to the extracted folder instead.
+Both options produce an identical install.
 
 ### Pin the extension
 

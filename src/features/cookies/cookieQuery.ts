@@ -13,6 +13,24 @@ import { isSecurityCookie } from "./securityCookies";
 // Helpers
 // ---------------------------------------------------------------------------
 
+// How long to wait for a single chrome.cookies.getAll call before giving up.
+// The cookie store can be locked by heavy writes (e.g. Amazon/IMDB setting many
+// cookies on page load), causing reads to stall indefinitely without this guard
+const COOKIES_GETALL_TIMEOUT_MS = 4000;
+
+/**
+ * Wraps chrome.cookies.getAll with a timeout so a stalled cookie-store lock
+ * can't hang the caller forever. Returns [] if the deadline is exceeded
+ */
+function getAllWithTimeout(details: chrome.cookies.GetAllDetails): Promise<chrome.cookies.Cookie[]> {
+  return Promise.race([
+    chrome.cookies.getAll(details),
+    new Promise<chrome.cookies.Cookie[]>((resolve) =>
+      setTimeout(() => resolve([]), COOKIES_GETALL_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 /**
  * Formats a Unix timestamp (seconds) into a readable date string.
  * Returns "Session" for cookies with no expiry set
@@ -94,7 +112,7 @@ export async function queryCookiesWithThirdParty(
   tabId: number,
 ): Promise<CookieQueryResult> {
   // First-party cookies — all match the page domain, so isThirdParty is false
-  const rawFirstParty = await chrome.cookies.getAll({ url: pageUrl });
+  const rawFirstParty = await getAllWithTimeout({ url: pageUrl });
   const firstPartyCookies: CookieInfo[] = rawFirstParty.map((c) => ({
     ...mapCookie(c, pageUrl),
     isThirdParty: false,
@@ -104,7 +122,7 @@ export async function queryCookiesWithThirdParty(
   const origins = getThirdPartyOrigins(tabId);
   const thirdPartyGroups = await Promise.all(
     origins.map(async (origin) => {
-      const raw = await chrome.cookies.getAll({ url: origin });
+      const raw = await getAllWithTimeout({ url: origin });
       return raw.map((c): CookieInfo => ({
         ...mapCookie(c, pageUrl),
         isThirdParty: true,
