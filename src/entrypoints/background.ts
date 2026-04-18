@@ -1,13 +1,7 @@
 /**
- * Service worker — runs persistently in the background.
- *
- * chrome.cookies and chrome.webRequest are privileged APIs that Chrome only
- * exposes to the background service worker (not to popups or content scripts).
- * Every cookie read/write in this extension must go through here.
- *
- * Manifest V3 service workers can be terminated by Chrome when idle and
- * re-spawned on demand. Do not rely on in-memory state surviving between
- * activations — use chrome.storage if you need persistence
+ * MV3 service worker — event-driven, spawned on demand and terminated when idle.
+ * Hosts chrome.cookies and chrome.webRequest, which Chrome only exposes here.
+ * Do not rely on in-memory state between activations — use chrome.storage instead
  */
 
 import { getDomain } from "tldts";
@@ -56,13 +50,9 @@ const PAYLOAD_PREVIEW_MAX_KEYS = 30;
 // Maximum characters stored for non-JSON payloads
 const PAYLOAD_PREVIEW_MAX_CHARS = 500;
 
-/**
- * Builds a payload string safe for storage and later display.
- * For JSON objects: parses and re-serializes up to PAYLOAD_PREVIEW_MAX_KEYS
- * top-level keys, so the stored value is always valid JSON regardless of
- * original payload size.
- * For non-JSON: falls back to a raw character slice
- */
+// Builds a payload string safe for storage and later display.
+// For JSON: parses and re-serializes up to PAYLOAD_PREVIEW_MAX_KEYS top-level keys.
+// For non-JSON: falls back to a raw character slice
 function buildPayloadPreview(payload: string): string {
   try {
     const parsed: unknown = JSON.parse(payload);
@@ -260,42 +250,30 @@ const TRACKER_FIELD_MAP: Record<string, { label: string; fields: string[] }> = {
   },
 };
 
-/**
- * Escapes special characters in a field and makes each underscore
- * optional, so the pattern matches with or without word separators.
- * Use this with the `i` flag for case-insensitive matching.
- * Example: "user_email" matches "user_email", "useremail", "user-email"
- */
+// Escapes a field name and makes each underscore optional, matching with or without
+// word separators. Use with the `i` flag. Example: "user_email" also matches "useremail"
 function flexibleField(name: string): string {
   return name
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/_/g, "_?");
 }
 
-/**
- * Builds a regex that matches `field` as a key in either URL-encoded
- * (key=value) or JSON ("key": value) format
- */
+// Builds a regex that matches `field` as a key in URL-encoded (key=value)
+// or JSON ("key": value) format
 function fieldPattern(field: string): RegExp {
   const flex = flexibleField(field);
   return new RegExp(`(?:^|[&?{,\\[\\s])${flex}=|["']${flex}["']\\s*:`, "i");
 }
 
-/**
- * Returns true if `field` appears as a key in the payload, handling both
- * URL-encoded (key=value) and JSON ("key": value) formats
- */
+// Returns true if `field` appears as a key in the payload, handling both
+// URL-encoded (key=value) and JSON ("key": value) formats
 function hasField(payload: string, field: string): boolean {
   return fieldPattern(field).test(payload);
 }
 
-/**
- * Extracts unique fields from a payload for display in the popup.
- * For JSON, collects keys from the root object and 2 levels deeper (i.e.
- * root keys, their children's keys, and their grandchildren's keys).
- * For URL-encoded payloads, returns each parameter name.
- * Capped at 20 keys to keep the UI manageable
- */
+// Extracts unique fields from a payload for display in the popup.
+// For JSON, collects keys up to 2 levels deep; for URL-encoded, returns parameter names.
+// Capped at 20 keys to keep the UI manageable
 function extractFields(payload: string): string[] {
   const keys = new Set<string>();
 
@@ -344,11 +322,9 @@ function extractFields(payload: string): string[] {
   return [...keys];
 }
 
-/**
- * Returns true if the request looks like an authentication handshake.
- * Uses OAuth payload fields and path heuristics rather than a domain
- * allowlist, so it works across all identity providers
- */
+// Returns true if the request looks like an authentication handshake.
+// Uses OAuth payload fields and path heuristics rather than a domain allowlist,
+// so it works across all identity providers
 function isAuthRequest(url: string, payload: string): boolean {
   try {
     if (AUTH_PATH_RE.test(new URL(url).pathname)) {
@@ -362,11 +338,9 @@ function isAuthRequest(url: string, payload: string): boolean {
   return AUTH_PAYLOAD_FIELDS.some((field) => lower.includes(field.toLowerCase()));
 }
 
-/**
- * Extracts a short text snippet centered on the first match of pattern in
- * payload, with up to 25 chars of context on each side.
- * Returns an empty string if there is no match
- */
+// Extracts a short text snippet centered on the first match of pattern in payload,
+// with up to 25 chars of context on each side.
+// Returns an empty string if there is no match
 function extractMatchSnippet(payload: string, pattern: RegExp): string {
   const match = pattern.exec(payload);
   if (!match) {
@@ -379,7 +353,7 @@ function extractMatchSnippet(payload: string, pattern: RegExp): string {
   return raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }
 
-/** Extracts a string from a WebRequestBody */
+// Extracts a string from a WebRequestBody
 function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string {
   if (requestBody.formData) {
     try {
@@ -408,16 +382,13 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
 // Badge helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Updates the extension icon badge for a specific tab.
- * A yellow dot appears once when third-party tracking cookies are first
- * detected, alerting the user without repeatedly retriggering as more
- * requests arrive.  Passing count=0 clears the badge (e.g. on navigation)
- */
+// Updates the extension icon badge for a specific tab.
+// A yellow dot appears once when third-party tracking cookies are first detected.
+// Passing count=0 clears the badge (e.g. on navigation)
 function updateBadge(tabId: number, count: number): void {
   if (count > 0) {
     // Only show the indicator once per page load — if a badge is already
-    // visible (cookie or higher-priority PII) don't overwrite or re-trigger.
+    // visible (cookie or higher-priority PII) don't overwrite or re-trigger
     if (!tabBadgeState.has(tabId)) {
       chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
       chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
@@ -430,17 +401,14 @@ function updateBadge(tabId: number, count: number): void {
   }
 }
 
-/**
- * Switches the badge to orange with a "!" to signal an active PII alert.
- * Takes priority over the yellow cookie-dot badge so the user notices
- * something more serious than a tracking cookie was detected.
- * Resets naturally on the next navigation when updateBadge() runs again
- */
+// Switches the badge to orange with "!" to signal an active PII alert.
+// Takes priority over the yellow cookie-dot so the user notices something
+// more serious than a tracking cookie was detected
 function setPiiBadge(tabId: number): void {
   chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
   chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
   chrome.action.setBadgeText({ text: "!", tabId });
-  // Mark as pii so subsequent cookie-badge calls don't overwrite this alert.
+  // Mark as pii so subsequent cookie-badge calls don't overwrite this alert
   tabBadgeState.set(tabId, "pii");
 }
 
@@ -594,7 +562,7 @@ export default defineBackground(() => {
       const locationFlaggedFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
       if (locationFlaggedFields.length > 0) {
         // One snippet is enough — location fields are usually grouped together
-        // (e.g., country/state/zip) so multiple snippets would overlap.
+        // (e.g., country/state/zip) so multiple snippets would overlap
         const locationSnippets: string[] = [];
         for (const field of locationFlaggedFields) {
           const fieldSnippet = extractMatchSnippet(payload, fieldPattern(field));
@@ -625,7 +593,7 @@ export default defineBackground(() => {
         }
 
         // One snippet per PII category — multiple fields of the same type
-        // (e.g. email + user_email) would produce redundant snippets.
+        // (e.g. email + user_email) would produce redundant snippets
         for (const fieldGroup of [emailFields, phoneFields, piiTrackerFields]) {
           for (const field of fieldGroup) {
             const fieldSnippet = extractMatchSnippet(payload, fieldPattern(field));
@@ -653,7 +621,7 @@ export default defineBackground(() => {
         const actionSnippets: string[] = [];
 
         // Only fire when the keyword appears in a field name.
-        // Matching against values produces many false positives.
+        // Matching against values produces many false positives
         for (const { re, label } of ACTION_CATEGORIES) {
           const matches = fields.filter(f => re.test(f));
           if (matches.length > 0) {
@@ -728,7 +696,7 @@ export default defineBackground(() => {
   //
   // On navigation COMPLETE (status: "complete") we query all cookies —
   // first-party and any third-party origins recorded during this page load —
-  // and update the badge with the current third-party cookie count.
+  // and update the badge with the current third-party cookie count
   // -------------------------------------------------------------------------
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!tab.url) {
@@ -759,7 +727,7 @@ export default defineBackground(() => {
   });
 
   // -------------------------------------------------------------------------
-  // CLEANUP — remove storage entries when a tab is closed.
+  // CLEANUP — remove storage entries when a tab is closed
   // -------------------------------------------------------------------------
   chrome.tabs.onRemoved.addListener((tabId) => {
       clearTabData(tabId);
@@ -774,7 +742,7 @@ export default defineBackground(() => {
   //
   // The popup sends a GetCookiesMessage with the active tab's URL and tabId.
   // We fetch the current cookies (first-party + observed third-party origins)
-  // and return them to the popup.
+  // and return them to the popup
   // -------------------------------------------------------------------------
   chrome.runtime.onMessage.addListener(
     (
@@ -797,7 +765,7 @@ export default defineBackground(() => {
         if (state === "cookie") {
           chrome.action.setBadgeText({ text: "", tabId: clearMsg.tabId });
           // Keep state as "cookie" so updateBadge won't re-show the dot
-          // until the next navigation resets it via clearTabData.
+          // until the next navigation resets it via clearTabData
         }
         sendResponse({});
         return false;
@@ -808,11 +776,11 @@ export default defineBackground(() => {
         const state = tabBadgeState.get(clearMsg.tabId);
         if (state === "pii") {
           chrome.action.setBadgeText({ text: "", tabId: clearMsg.tabId });
-          // Keep state as "pii" so neither the cookie dot nor the PII badge
-          // can reappear for this page load after the user has dismissed it.
+          // Keep state as "pii" so neither the cookie badge nor the PII badge
+          // can reappear for this page load after the user has dismissed it
         }
         // Mark alerts as viewed so the orange dot is not re-shown when the
-        // popup is closed and reopened.
+        // popup is closed and reopened
         tabAlertsViewed.add(clearMsg.tabId);
         sendResponse({});
         return false;
@@ -843,7 +811,7 @@ export default defineBackground(() => {
           sendResponse({ cookies: [], queriedAt: new Date().toISOString() });
         });
 
-      return true; // keep message channel open for async response
+      return true; // Keep message channel open for async response
     },
   );
 });

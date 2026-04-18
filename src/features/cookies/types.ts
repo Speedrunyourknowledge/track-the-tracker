@@ -148,7 +148,7 @@ export interface ClearPiiBadgeMessage {
   tabId: number;
 }
 
-/** Sent when the user views the Cookies tab — tells the background to dismiss the cookie dot badge */
+/** Sent when the user views the Cookies tab — tells the background to dismiss the cookie badge */
 export interface ClearCookieBadgeMessage {
   type: "CLEAR_COOKIE_BADGE";
   tabId: number;
