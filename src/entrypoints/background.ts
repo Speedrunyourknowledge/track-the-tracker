@@ -383,32 +383,43 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
 
 // Updates the extension icon badge for a specific tab.
 // A yellow dot appears once when third-party tracking cookies are first detected.
-// Passing count=0 clears the badge (e.g. on navigation)
-function updateBadge(tabId: number, count: number): void {
-  if (count > 0) {
-    // Only show the indicator once per page load — if a badge is already
-    // visible (cookie or higher-priority PII) don't overwrite or re-trigger
-    if (!tabBadgeState.has(tabId)) {
-      chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
-      chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-      chrome.action.setBadgeText({ text: "!", tabId });
-      tabBadgeState.set(tabId, "cookie");
+// Passing count=0 clears the badge (e.g. on navigation).
+// Errors are silently ignored — the tab may have been closed before this runs
+async function updateBadge(tabId: number, count: number): Promise<void> {
+  try {
+    if (count > 0) {
+      // Only show the indicator once per page load — if a badge is already
+      // visible (cookie or higher-priority PII) don't overwrite or re-trigger
+      if (!tabBadgeState.has(tabId)) {
+        await chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
+        await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+        await chrome.action.setBadgeText({ text: "!", tabId });
+        tabBadgeState.set(tabId, "cookie");
+      }
+    }
+    else {
+      await chrome.action.setBadgeText({ text: "", tabId });
     }
   }
-  else {
-    chrome.action.setBadgeText({ text: "", tabId });
+  catch {
+    // Tab closed before the badge update ran
   }
 }
 
 // Switches the badge to orange with "!" to signal an active PII alert.
 // Takes priority over the yellow cookie-dot so the user notices something
 // more serious than a tracking cookie was detected
-function setPiiBadge(tabId: number): void {
-  chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
-  chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-  chrome.action.setBadgeText({ text: "!", tabId });
-  // Mark as pii so subsequent cookie-badge calls don't overwrite this alert
-  tabBadgeState.set(tabId, "pii");
+async function setPiiBadge(tabId: number): Promise<void> {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#f97316", tabId });
+    await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+    await chrome.action.setBadgeText({ text: "!", tabId });
+    // Mark as pii so subsequent cookie-badge calls don't overwrite this alert
+    tabBadgeState.set(tabId, "pii");
+  }
+  catch {
+    // Tab closed before the badge update ran
+  }
 }
 
 // Per-tab debounce timers so the badge updates after the burst of webRequest
