@@ -82,12 +82,12 @@ wxt.config.ts          # Extension manifest & permissions
 
 By installing the extension, you can use it during normal browsing.
 
-#### Option A — Download the pre-built zip (no prerequisites)
+#### Option A — Download the pre-built zip
 
 1. Download the `.zip` from the [latest GitHub Release](releases/latest) and extract it
 2. Open Chrome and go to `chrome://extensions`
 3. Enable **Developer mode** (toggle in the top-right corner)
-4. Click **Load unpacked** and select the extracted folder
+4. Click **Load unpacked** and select the folder extracted from the zip
 
 #### Option B — Build from source
 
@@ -107,7 +107,7 @@ Prerequisites
    ```
 3. Open Chrome and go to `chrome://extensions`
 4. Enable **Developer mode** (toggle in the top-right corner)
-5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder
+5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder (generated during the build step)
 
 Both options produce an identical install.
 
