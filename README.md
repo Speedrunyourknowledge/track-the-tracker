@@ -115,7 +115,7 @@ Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
 # Install dependencies
 npm install
 
-# Run in development mode (auto-reloads on file changes)
+# Run in development mode
 npm run dev
 
 # Create a production build
@@ -132,7 +132,7 @@ npm run lint
 npm run sync
 ```
 
-In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
+In development mode, WXT will open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
 
 ## Success Criteria
 
