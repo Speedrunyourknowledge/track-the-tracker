@@ -1,11 +1,7 @@
 /**
- * Tracks which third-party origins are contacted by each tab, using the
- * webRequest API. The background service worker records origins here as
- * requests fire; the cookie query layer reads them back to fetch cookies
- * for each observed third-party domain.
- *
- * Stored in chrome.storage.session (cleared on browser restart, keyed by
- * tabId) to avoid persisting stale data across sessions
+ * Tracks third-party origins contacted by each tab via the webRequest API.
+ * Origins are stored in chrome.storage.session (keyed by tabId) and read
+ * back by the cookie query layer to fetch cookies for each observed domain
  */
 
 import { getDomain } from "tldts";

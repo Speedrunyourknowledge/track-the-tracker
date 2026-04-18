@@ -115,10 +115,6 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
         existing.actionFields.push(f);
       }
     }
-    // If any occurrence sent a cookie, mark the entry as cookie-linked
-    if (req.hasCookie) {
-      existing.hasCookie = true;
-    }
   }
   else {
     reqs.push({ ...req, count: 1 });
@@ -144,8 +140,8 @@ const AUTH_PAYLOAD_FIELDS = [
   "SAMLRequest",   // SAML 2.0 IdP-initiated SSO request
 ];
 
-// Matches /oauth, /oauth2, /saml path prefixes, and the /connect/token path
-// used by IdentityServer and common OIDC providers. Broader terms like /token
+// Matches /oauth, /oauth2, /saml, and /connect/token path segments anywhere in
+// the pathname (e.g. /api/oauth2/token also matches). Broader terms like /token
 // or /login are intentionally excluded — they appear in tracker endpoint paths
 // too (e.g. /api/get-token-info). The payload field check handles those flows
 const AUTH_PATH_RE = /\/oauth2?(?:\/|$)|\/saml(?:\/|$)|\/connect\/token(?:\/|$)/i;
@@ -363,7 +359,7 @@ function isAuthRequest(url: string, payload: string): boolean {
     // ignore invalid URLs
   }
   const lower = payload.toLowerCase();
-  return AUTH_PAYLOAD_FIELDS.some((field) => lower.includes(field));
+  return AUTH_PAYLOAD_FIELDS.some((field) => lower.includes(field.toLowerCase()));
 }
 
 /**
@@ -552,12 +548,6 @@ export default defineBackground(() => {
       ];
       const actionFields = fields.filter(f => ACTION_CATEGORIES.some(({ re }) => re.test(f)));
 
-      // True when the request includes a Cookie header — the third party can
-      // tie this POST to a persistent identity stored on the user's browser
-      const hasCookie = details.requestHeaders?.some(
-        (h) => h.name.toLowerCase() === "cookie"
-      ) ?? false;
-
       // Record every third-party non-auth POST so the user can inspect them
       addPostRequest(details.tabId, {
         id: details.requestId,
@@ -567,7 +557,6 @@ export default defineBackground(() => {
         fields,
         piiFields,
         actionFields,
-        hasCookie,
       });
 
       // --- PII check ---
@@ -694,7 +683,7 @@ export default defineBackground(() => {
       }
     },
     { urls: ["<all_urls>"] },
-    ["requestHeaders", "extraHeaders"]
+    ["requestHeaders"]
   );
 
   chrome.webRequest.onErrorOccurred.addListener(

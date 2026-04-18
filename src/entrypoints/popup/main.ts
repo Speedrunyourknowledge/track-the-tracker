@@ -66,11 +66,14 @@ function buildAlertsHtml(response: GetAlertsResponse): string {
 }
 
 /** Builds the third-party POST requests section HTML string. */
-function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
+function buildPostRequestsHtml(response: GetPostRequestsResponse, alerts: GetAlertsResponse): string {
   const { requests } = response;
   if (requests.length === 0) {
     return "";
   }
+  // Domains that triggered at least one alert — highlighted in the list so
+  // the user knows expanding that row will show the relevant fields
+  const alertedDomains = new Set(alerts.alerts.map(a => a.domain));
   return `
     <div style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;">
       <p style="margin: 0 0 8px 0; font-weight: bold;">Third-party POST Requests (${requests.length})</p>
@@ -88,15 +91,17 @@ function buildPostRequestsHtml(response: GetPostRequestsResponse): string {
               return `<span style="${style}">${escapeHtml(label)}</span>`;
             }).join(" ")
           : "<span style='color:#aaa;font-size:0.78rem;'>No fields parsed</span>";
+        const domainStyle = alertedDomains.has(r.domain)
+          ? "font-size: 0.78rem; color: #c2410c; font-weight: bold;"
+          : "font-size: 0.78rem;";
 
         return `
           <details style="margin-bottom: 6px;">
             <summary style="cursor: pointer; word-break: break-all;">
-              <code style="font-size: 0.78rem;${r.hasCookie ? "color:#c2410c;font-weight:bold;" : ""}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
+              <code style="${domainStyle}">${escapeHtml(r.domain)}</code>${r.count > 1 ? `<span style="margin-left:5px;color:#888;font-size:0.72rem;">&times;${r.count}</span>` : ""}
             </summary>
             <div style="margin-top: 6px; padding-left: 8px; font-size: 0.78rem; color: #555; word-break: break-all;">
               <div>URL: <code>${escapeHtml(r.url)}</code></div>
-              ${r.hasCookie ? `<div style="margin-top:4px;"><span style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:10px;font-size:0.72rem;">cookie-linked</span></div>` : ""}
               <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">${fieldTags}</div>
             </div>
           </details>
@@ -279,7 +284,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
       </div>
       <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
-      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes)}</div>
+      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}</div>
     `;
 
     // Attach tab switching listeners — inline onclick is blocked by MV3 CSP.

@@ -132,8 +132,6 @@ export interface PostRequestInfo {
   piiFields: string[];
   /** Subset of fields that matched an action tracking pattern (page, click, scroll, etc.) */
   actionFields: string[];
-  /** True when the request included a Cookie header — the third party can link this POST to a persistent identity */
-  hasCookie: boolean;
   /** How many times this domain+fields combination was observed during this page load */
   count: number;
 }
