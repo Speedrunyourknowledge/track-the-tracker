@@ -114,13 +114,13 @@ In development mode, WXT will build the extension and open a Chrome instance wit
 
 ## Success Criteria
 
-- [x] Reads the contents of the browser's cookie jar
-- [x] Identifies third-party tracking cookies and separates them from harmless security cookies
-- [x] Detects outgoing third-party tracking requests
-- [x] Notifies the user when a tracking request contains PII (de-anonymization alert)
-- [x] Detects location data exfiltration in POST request payloads
-- [x] Detects behavioral action tracking (clicks, scrolls, page visits, video) in POST request payloads
-- [x] Identifies tracker-specific hashed identity fields for major ad platforms
+- ✅ Reads the contents of the browser's cookie jar
+- ✅ Identifies third-party tracking cookies and separates them from harmless security cookies
+- ✅ Detects outgoing third-party tracking requests
+- ✅ Notifies the user when a tracking request contains PII (de-anonymization alert)
+- ✅ Detects location data in POST request payloads
+- ✅ Detects behavioral action tracking (e.g., clicks, page visits) in POST request payloads
+- ✅ Identifies tracker-specific hashed identity fields for major ad platforms
 
 ## License
 
