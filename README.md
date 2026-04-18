@@ -105,6 +105,9 @@ npm run sync
 
 In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
 
+Pin the extension to see all the features
+- Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
+
 ## Success Criteria
 
 - ✅ Reads the contents of the browser's cookie jar
