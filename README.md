@@ -38,6 +38,11 @@ The extension icon shows a `!` badge when tracking activity is detected on the a
 
 The badge is cleared when the user opens the relevant tab in the popup.
 
+**Badge update behavior:**
+- The yellow badge fires **once per page load**. After it has been set, additional third-party cookie detections for the same page don't re-trigger it, preventing notification spam.
+- The orange badge fires **every time a new PII or location alert is detected**, and takes priority over the yellow badge.
+- Both states reset on navigation, so each new page load starts fresh.
+
 ## Project Structure
 
 [WXT](https://wxt.dev/guide/essentials/project-structure) is used to package the source code into the final extension.
