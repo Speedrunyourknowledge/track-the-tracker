@@ -13,7 +13,16 @@ import type {
 } from "../../features/cookies/types";
 
 const app = document.getElementById("app")!;
-app.textContent = "Loading cookies…";
+
+function showLoading(): void {
+  app.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+      <span class="spinner"></span>
+      <span>Cookies loading. <span style="color:#aaa;">Sites with many trackers take a moment to scan.</span></span>
+    </div>`;
+}
+
+showLoading();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -144,8 +153,7 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
     </details>
   ` : "";
 
-  // If there are third-party cookies, open third-party by default and collapse first-party.
-  // Otherwise, open first-party by default
+  // Open third-party by default if present, otherwise open first-party
   const hasThirdParty = thirdParty.length > 0;
   const thirdPartyOpen = hasThirdParty ? " open" : "";
   const firstPartyOpen = hasThirdParty ? "" : " open";
@@ -238,18 +246,21 @@ function escapeHtml(str: string): string {
 // Main: get the active tab URL + tabId, then ask the background for cookies
 // ---------------------------------------------------------------------------
 
-function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 10000): Promise<T> {
+function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 4000): Promise<T> {
   return new Promise((resolve, reject) => {
-    // Guard against the MV3 service worker being killed mid-request without
-    // Chrome firing lastError — in that case the callback would never run
-    const timer = setTimeout(
-      () => reject(new Error("Extension response timed out. Try reopening the popup.")),
-      timeoutMs
-    );
-    chrome.runtime.sendMessage(message, (response) => {
+    // Timeout guards against the service worker accepting the message then
+    // terminating before it calls sendResponse (an MV3 race condition that
+    // leaves the popup stuck on "Loading cookies…" indefinitely)
+    const timer = setTimeout(() => {
+      reject(new Error("timeout"));
+    }, timeoutMs);
+
+    chrome.runtime.sendMessage(message, (response: T) => {
       clearTimeout(timer);
       if (chrome.runtime.lastError) {
-        reject(chrome.runtime.lastError);
+        // lastError is {message: string}, not an Error — wrap it so the catch
+        // block can display the message string instead of "[object Object]"
+        reject(new Error(chrome.runtime.lastError.message ?? "Extension messaging error"));
       }
       else {
         resolve(response);
@@ -258,16 +269,7 @@ function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 10000): Pro
   });
 }
 
-chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-  const tab = tabs[0];
-  const url = tab?.url;
-  const tabId = tab?.id;
-
-  if (!url || tabId === undefined) {
-    app.textContent = "Could not determine the current tab.";
-    return;
-  }
-
+async function loadData(url: string, tabId: number): Promise<void> {
   try {
     const [alertsRes, postReqRes, cookiesRes] = await Promise.all([
       sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId }),
@@ -276,6 +278,12 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
     ]);
 
     const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
+
+    // Cookie store was locked and returned nothing — retry so the user never
+    // has to see an error message or act themselves
+    if (cookiesRes.timedOut && cookiesRes.cookies.length === 0) {
+      return loadData(url, tabId);
+    }
 
     const alertDot = hasAlerts
       ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`
@@ -305,7 +313,6 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       panelRequests.style.display = "none";
       btnCookies.setAttribute("style", tabBtnActive);
       btnRequests.setAttribute("style", tabBtnInactive);
-      // Dismiss the cookie badge now that the user is viewing the cookies tab
       sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
     });
 
@@ -314,16 +321,37 @@ chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       panelRequests.style.display = "";
       btnCookies.setAttribute("style", tabBtnInactive);
       btnRequests.setAttribute("style", tabBtnActive);
-      // Remove the orange dot once the user has seen the alerts tab
       document.getElementById("alert-dot")?.remove();
-      // Dismiss the PII badge now that the user is viewing the alerts
       sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
     });
 
-    // The Cookies tab is shown by default on popup open — clear the cookie badge immediately
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
   }
   catch (err: unknown) {
-    app.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    const isTimeout = err instanceof Error && err.message === "timeout";
+
+    // Silently retry on timeout — if the page is still loading
+    // (e.g. a PWA service worker update is in progress), a later attempt will
+    // hit the cache and succeed without the user having to do anything
+    if (isTimeout) {
+      return loadData(url, tabId);
+    }
+
+    // Non-timeout error (e.g. messaging error) — show loading state and stop,
+    // since retrying immediately won't help
+    showLoading();
   }
+}
+
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  const tab = tabs[0];
+  const url = tab?.url;
+  const tabId = tab?.id;
+
+  if (!url || tabId === undefined) {
+    app.textContent = "Could not determine the current tab.";
+    return;
+  }
+
+  loadData(url, tabId);
 });

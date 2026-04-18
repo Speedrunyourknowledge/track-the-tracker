@@ -6,6 +6,17 @@
     <style>
       body { width: 320px; min-height: 200px; font-family: sans-serif; padding: 1rem; }
       h1 { font-size: 1rem; margin: 0 0 0.75rem 0; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .spinner {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid #d1d5db;
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 0.75s linear infinite;
+        vertical-align: middle;
+        flex-shrink: 0;
+      }
     </style>
   </head>
   <body>

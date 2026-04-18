@@ -13,7 +13,6 @@ import {
 } from "../features/cookies/thirdPartyDomains";
 import type {
   GetCookiesMessage,
-  GetCookiesResponse,
   AlertInfo,
   GetAlertsMessage,
   PostRequestInfo,
@@ -784,25 +783,19 @@ export default defineBackground(() => {
         return false;
       }
 
-      if (msg.type !== "GET_COOKIES") {
-        return false;
+      if (msg.type === "GET_COOKIES") {
+        const cookieMessage = message as GetCookiesMessage;
+        queryCookiesWithThirdParty(cookieMessage.url, cookieMessage.tabId)
+          .then((result): void => {
+            sendResponse({ cookies: result.cookies, queriedAt: result.queriedAt, timedOut: result.timedOut });
+          })
+          .catch((): void => {
+            sendResponse({ cookies: [], queriedAt: new Date().toISOString(), timedOut: true });
+          });
+        return true; // keep channel open for async sendResponse
       }
 
-      const cookieMessage = message as GetCookiesMessage;
-      queryCookiesWithThirdParty(cookieMessage.url, cookieMessage.tabId)
-        .then((result) => {
-          const response: GetCookiesResponse = {
-            cookies: result.cookies,
-            queriedAt: result.queriedAt,
-          };
-          sendResponse(response);
-        })
-        .catch((err) => {
-          console.error("[Track the Tracker] Cookie query failed:", err);
-          sendResponse({ cookies: [], queriedAt: new Date().toISOString() });
-        });
-
-      return true; // Keep message channel open for async response
+      return false;
     },
   );
 });
