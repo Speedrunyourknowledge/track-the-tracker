@@ -246,7 +246,11 @@ function escapeHtml(str: string): string {
 // Main: get the active tab URL + tabId, then ask the background for cookies
 // ---------------------------------------------------------------------------
 
-function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 4000): Promise<T> {
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 6000): Promise<T> {
   return new Promise((resolve, reject) => {
     // Timeout guards against the service worker accepting the message then
     // terminating before it calls sendResponse (an MV3 race condition that
@@ -279,9 +283,9 @@ async function loadData(url: string, tabId: number): Promise<void> {
 
     const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
 
-    // Cookie store was locked and returned nothing — retry so the user never
-    // has to see an error message or act themselves
+    // Cookie store was locked and returned nothing — wait briefly and retry
     if (cookiesRes.timedOut && cookiesRes.cookies.length === 0) {
+      await delay(1500);
       return loadData(url, tabId);
     }
 
@@ -327,19 +331,12 @@ async function loadData(url: string, tabId: number): Promise<void> {
 
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
   }
-  catch (err: unknown) {
-    const isTimeout = err instanceof Error && err.message === "timeout";
-
-    // Silently retry on timeout — if the page is still loading
-    // (e.g. a PWA service worker update is in progress), a later attempt will
-    // hit the cache and succeed without the user having to do anything
-    if (isTimeout) {
-      return loadData(url, tabId);
-    }
-
-    // Non-timeout error (e.g. messaging error) — show loading state and stop,
-    // since retrying immediately won't help
-    showLoading();
+  catch {
+    // Retry on all errors — the service worker may have been killed mid-flight
+    // (an MV3 race) or the cookie store may still be locked. A later attempt
+    // will succeed once the page settles
+    await delay(1500);
+    return loadData(url, tabId);
   }
 }
 
