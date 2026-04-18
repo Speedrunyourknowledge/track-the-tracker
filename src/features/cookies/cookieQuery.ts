@@ -101,7 +101,7 @@ export async function queryCookiesWithThirdParty(
   }));
 
   // Third-party cookies — one getAll call per observed third-party origin
-  const origins = await getThirdPartyOrigins(tabId);
+  const origins = getThirdPartyOrigins(tabId);
   const thirdPartyGroups = await Promise.all(
     origins.map(async (origin) => {
       const raw = await chrome.cookies.getAll({ url: origin });

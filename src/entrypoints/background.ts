@@ -670,17 +670,12 @@ export default defineBackground(() => {
       try {
         if (isThirdPartyRequest(details.url, details.initiator)) {
           const requestOrigin = new URL(details.url).origin;
-          recordThirdPartyOrigin(details.tabId, requestOrigin)
-            .then((isNew) => {
-              if (isNew) {
-                scheduleBadgeUpdate(details.tabId);
-              }
-            })
-            .catch((err) =>
-              console.error("[Track the Tracker] Failed to record third-party origin:", err),
-            );
+          const isNew = recordThirdPartyOrigin(details.tabId, requestOrigin);
+          if (isNew) {
+            scheduleBadgeUpdate(details.tabId);
+          }
         }
-      } 
+      }
       catch {
         // Ignore unparseable URLs
       }
@@ -708,9 +703,7 @@ export default defineBackground(() => {
 
     if (changeInfo.status === "loading") {
       clearTabData(tabId);
-      clearThirdPartyOrigins(tabId).catch((err) =>
-        console.error("[Track the Tracker] Failed to clear third-party origins:", err),
-      );
+      clearThirdPartyOrigins(tabId);
       return;
     }
 
@@ -730,10 +723,8 @@ export default defineBackground(() => {
   // CLEANUP — remove storage entries when a tab is closed
   // -------------------------------------------------------------------------
   chrome.tabs.onRemoved.addListener((tabId) => {
-      clearTabData(tabId);
-    clearThirdPartyOrigins(tabId).catch((err) =>
-      console.error("[Track the Tracker] Third-party origin cleanup failed:", err),
-    );
+    clearTabData(tabId);
+    clearThirdPartyOrigins(tabId);
     updateBadge(tabId, 0);
   });
 

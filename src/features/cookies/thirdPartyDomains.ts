@@ -1,37 +1,36 @@
 /**
  * Tracks third-party origins contacted by each tab via the webRequest API.
- * Origins are stored in chrome.storage.session (keyed by tabId) and read
- * back by the cookie query layer to fetch cookies for each observed domain
+ * Origins are kept in an in-memory Map (same as tabAlerts / tabPostRequests)
+ * so concurrent webRequest events don't race on chrome.storage writes
  */
 
 import { getDomain } from "tldts";
 
-function storageKey(tabId: number): string {
-  return `tporigins_${tabId}`;
-}
+// Keyed by tabId, stores the set of third-party origins seen during this page load
+const thirdPartyOriginsMap = new Map<number, Set<string>>();
 
 /**
  * Adds a third-party origin to the set observed for this tab.
  * Returns true if the origin was newly added, false if already present
  */
-export async function recordThirdPartyOrigin(tabId: number, origin: string): Promise<boolean> {
-  const key = storageKey(tabId);
-  const stored = await chrome.storage.session.get(key);
-  const origins: string[] = stored[key] ?? [];
-  if (origins.includes(origin)) {
+export function recordThirdPartyOrigin(tabId: number, origin: string): boolean {
+  let origins = thirdPartyOriginsMap.get(tabId);
+  if (!origins) {
+    origins = new Set<string>();
+    thirdPartyOriginsMap.set(tabId, origins);
+  }
+  if (origins.has(origin)) {
     return false;
   }
-  await chrome.storage.session.set({ [key]: [...origins, origin] });
+  origins.add(origin);
   return true;
 }
 
 /**
  * Returns all third-party origins recorded for a tab, or [] if none
  */
-export async function getThirdPartyOrigins(tabId: number): Promise<string[]> {
-  const key = storageKey(tabId);
-  const stored = await chrome.storage.session.get(key);
-  return stored[key] ?? [];
+export function getThirdPartyOrigins(tabId: number): string[] {
+  return [...(thirdPartyOriginsMap.get(tabId) ?? [])];
 }
 
 /**
@@ -39,8 +38,8 @@ export async function getThirdPartyOrigins(tabId: number): Promise<string[]> {
  * Called at the start of each navigation so stale origins don't bleed
  * into the next page, and when a tab is closed to free storage
  */
-export async function clearThirdPartyOrigins(tabId: number): Promise<void> {
-  await chrome.storage.session.remove(storageKey(tabId));
+export function clearThirdPartyOrigins(tabId: number): void {
+  thirdPartyOriginsMap.delete(tabId);
 }
 
 /**
