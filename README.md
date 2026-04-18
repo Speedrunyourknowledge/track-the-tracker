@@ -83,14 +83,43 @@ wxt.config.ts          # Extension manifest & permissions
 - Node.js ≥ 18
 - npm ≥ 9
 
+### Install as an extension (recommended)
+
+This method allows you to use the extension during normal browsing
+
+1. Clone the repo and install dependencies:
+   ```bash
+   git clone https://github.com/Speedrunyourknowledge/track-the-tracker.git
+   cd track-the-tracker
+   npm install
+   ```
+2. Build the extension:
+   ```bash
+   npm run build
+   ```
+3. Open Chrome and go to `chrome://extensions`
+4. Enable **Developer mode** (toggle in the top-right corner)
+5. Click **Load unpacked** and select the `.output/chrome-mv3/` folder (generated during the build step)
+
+The extension is now installed and behaves identically to a Chrome Web Store install.
+
+> Alternatively, download the pre-built `.zip` from the [latest GitHub Release](../../releases/latest), extract it, and follow steps 3–5 above, pointing to the extracted folder instead.
+
+### Pin the extension
+
+Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
+
 ### Scripts
 
 ```bash
 # Install dependencies
 npm install
 
-# Run in development mode
+# Run in development mode (auto-reloads on file changes)
 npm run dev
+
+# Create a production build
+npm run build
 
 # Create a production build and zip it for distribution
 npm run zip
@@ -104,9 +133,6 @@ npm run sync
 ```
 
 In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
-
-Pin the extension to see all the features
-- Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
 
 ## Success Criteria
 
