@@ -528,7 +528,10 @@ export default defineBackground(() => {
 
       // --- PII check ---
       const piiLabels: string[] = [];
-      const EMAIL_RE = /[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9-]{2,}\.[a-zA-Z]{2,}/;
+
+      // Requires a value-start delimiter before and a value-end delimiter after the address.
+      // Real emails in POST bodies are always delimited; opaque binary data is not
+      const EMAIL_RE = /(?:^|(?<=["'=&,;\s]))[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9.-]{2,}\.[a-zA-Z]{2,6}(?=["'&,;\s]|$)/;
 
       // Email fields
       const emailFields = EMAIL_FIELD_NAMES.filter((f) => hasField(payload, f));
