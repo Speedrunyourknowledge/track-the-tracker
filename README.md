@@ -105,12 +105,8 @@ npm run sync
 
 In development mode, WXT will build the extension and open a Chrome instance with the extension already loaded. Any change to a source file triggers an automatic reload.
 
-### Load Manually in Chrome
-
-1. Run `npm run dev` or `npm run zip`
-2. Navigate to `chrome://extensions`
-3. Enable **Developer mode** (top-right toggle)
-4. Click **Load unpacked** and select the `.output/chrome-mv3/` directory
+Pin the extension to see all the features
+- Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
 
 ## Success Criteria
 
