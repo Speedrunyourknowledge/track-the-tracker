@@ -338,7 +338,7 @@ function isAuthRequest(url: string, payload: string): boolean {
 }
 
 // Extracts a short text snippet around the first match of pattern in payload.
-// Shows 10 chars before the match start and stops 50 chars past it.
+// Shows 10 chars before the match start and stops 60 chars past it.
 // Returns an empty string if there is no match
 function extractMatchSnippet(payload: string, pattern: RegExp): string {
   const match = pattern.exec(payload);
@@ -346,7 +346,7 @@ function extractMatchSnippet(payload: string, pattern: RegExp): string {
     return "";
   }
   const start = Math.max(0, match.index - 10);
-  const end = Math.min(payload.length, match.index + 50);
+  const end = Math.min(payload.length, match.index + 60);
   const raw = (start > 0 ? "\u2026" : "") + payload.slice(start, end) + (end < payload.length ? "\u2026" : "");
   // Unescape JSON string escapes that appear when the payload was stringified from formData
   return raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
