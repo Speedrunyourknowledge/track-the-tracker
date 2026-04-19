@@ -386,20 +386,16 @@ function getPayloadString(requestBody: chrome.webRequest.WebRequestBody): string
 // Passing count=0 clears the badge (e.g. on navigation).
 // Errors are silently ignored — the tab may have been closed before this runs
 async function updateBadge(tabId: number, count: number): Promise<void> {
+  // Badge is only cleared on navigation start or when the user views the alert.
+  // A count of 0 is ignored — it must not wipe a badge that was already earned
+  if (count <= 0 || tabBadgeState.has(tabId)) {
+    return;
+  }
   try {
-    if (count > 0) {
-      // Only show the indicator once per page load — if a badge is already
-      // visible (cookie or higher-priority PII) don't overwrite or re-trigger
-      if (!tabBadgeState.has(tabId)) {
-        await chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
-        await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
-        await chrome.action.setBadgeText({ text: "!", tabId });
-        tabBadgeState.set(tabId, "cookie");
-      }
-    }
-    else {
-      await chrome.action.setBadgeText({ text: "", tabId });
-    }
+    await chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
+    await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
+    await chrome.action.setBadgeText({ text: "!", tabId });
+    tabBadgeState.set(tabId, "cookie");
   }
   catch {
     // Tab closed before the badge update ran
@@ -717,6 +713,7 @@ export default defineBackground(() => {
     if (changeInfo.status === "loading") {
       clearTabData(tabId);
       clearThirdPartyOrigins(tabId);
+      chrome.action.setBadgeText({ text: "", tabId }).catch(() => { /* tab may be closing */ });
       return;
     }
 
@@ -738,7 +735,6 @@ export default defineBackground(() => {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearTabData(tabId);
     clearThirdPartyOrigins(tabId);
-    updateBadge(tabId, 0);
   });
 
   // -------------------------------------------------------------------------
