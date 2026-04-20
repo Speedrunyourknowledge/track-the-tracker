@@ -217,8 +217,8 @@ const PHONE_FIELD_NAMES = [
   "sha256_phone_number",
 ];
 
-// Location-related fields
-const LOCATION_FIELD_NAMES = [
+// High-precision location fields — any one of these alone is meaningful tracking
+const LOCATION_FIELDS_HIGH = [
   "latitude",
   "longitude",
   "lat",
@@ -226,15 +226,24 @@ const LOCATION_FIELD_NAMES = [
   "geo",
   "geolocation",
   "gps",
-  "country",
   "city",
-  "state",
   "zip",
   "zip_code",
   "postal_code",
+];
+
+// Low-precision fields — routinely sent for billing and localization purposes
+// (e.g. showing the correct currency or legal text). Only flagged when a
+// high-precision field is also present
+const LOCATION_FIELDS_LOW = [
+  "country",
+  "state",
   "region",
   "province",
 ];
+
+// Combined list used for piiFields highlighting in the POST requests list
+const LOCATION_FIELD_NAMES = [...LOCATION_FIELDS_HIGH, ...LOCATION_FIELDS_LOW];
 
 // Human-readable display names for field names that are abbreviated or ambiguous.
 // This controls how field names appear in the UI
@@ -666,7 +675,8 @@ export default defineBackground(() => {
 
       // --- Location tracking alert (separate from PII) ---
       const locationFlaggedFields = LOCATION_FIELD_NAMES.filter((f) => hasField(payload, f));
-      if (locationFlaggedFields.length > 0) {
+      const highPrecisionHit = locationFlaggedFields.some((f) => LOCATION_FIELDS_HIGH.includes(f));
+      if (highPrecisionHit) {
         // One snippet is enough — location fields are usually grouped together
         // (e.g., country/state/zip) so multiple snippets would overlap
         const locationSnippets: string[] = [];
