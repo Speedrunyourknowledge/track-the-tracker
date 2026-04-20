@@ -69,6 +69,7 @@ function clearTabData(tabId: number): void {
   tabPostRequests.delete(tabId);
   tabBadgeState.delete(tabId);  // reset so fresh indicator can appear on next page
   tabAlertsViewed.delete(tabId);
+  chrome.storage.session.remove([`alerts_${tabId}`, `requests_${tabId}`, `alertsViewed_${tabId}`]).catch(() => {});
 }
 
 function addAlert(tabId: number, alert: AlertInfo): void {
@@ -77,6 +78,8 @@ function addAlert(tabId: number, alert: AlertInfo): void {
   if (!alerts.some((a) => a.id === alert.id)) {
     alerts.push(alert);
     tabAlerts.set(tabId, alerts);
+    // Persist so data survives service worker restarts within the browser session
+    chrome.storage.session.set({ [`alerts_${tabId}`]: alerts }).catch(() => {});
     if (alert.type === "pii_exfiltration" || alert.type === "location_tracking") {
       setPiiBadge(tabId);
     }
@@ -109,6 +112,8 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
     reqs.push({ ...req, count: 1 });
     tabPostRequests.set(tabId, reqs);
   }
+  // Persist so data survives service worker restarts within the browser session
+  chrome.storage.session.set({ [`requests_${tabId}`]: reqs }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -753,10 +758,15 @@ export default defineBackground(() => {
       const msg = message as { type?: string };
       if (msg.type === "GET_ALERTS") {
         const alertsMsg = message as GetAlertsMessage;
-        const alerts = tabAlerts.get(alertsMsg.tabId) || [];
-        const alertsViewed = tabAlertsViewed.has(alertsMsg.tabId);
-        sendResponse({ alerts, alertsViewed });
-        return false;
+        chrome.storage.session
+          .get([`alerts_${alertsMsg.tabId}`, `alertsViewed_${alertsMsg.tabId}`])
+          .then((data) => {
+            const alerts = (data[`alerts_${alertsMsg.tabId}`] as AlertInfo[]) || [];
+            const alertsViewed = (data[`alertsViewed_${alertsMsg.tabId}`] as boolean) || false;
+            sendResponse({ alerts, alertsViewed });
+          })
+          .catch(() => sendResponse({ alerts: [], alertsViewed: false }));
+        return true; // async sendResponse
       }
 
       if (msg.type === "CLEAR_COOKIE_BADGE") {
@@ -782,15 +792,21 @@ export default defineBackground(() => {
         // Mark alerts as viewed so the orange dot is not re-shown when the
         // popup is closed and reopened
         tabAlertsViewed.add(clearMsg.tabId);
+        chrome.storage.session.set({ [`alertsViewed_${clearMsg.tabId}`]: true }).catch(() => {});
         sendResponse({});
         return false;
       }
 
       if (msg.type === "GET_POST_REQUESTS") {
         const postMsg = message as GetPostRequestsMessage;
-        const requests = tabPostRequests.get(postMsg.tabId) || [];
-        sendResponse({ requests, retrievedAt: new Date().toISOString() });
-        return false;
+        chrome.storage.session
+          .get(`requests_${postMsg.tabId}`)
+          .then((data) => {
+            const requests = (data[`requests_${postMsg.tabId}`] as PostRequestInfo[]) || [];
+            sendResponse({ requests, retrievedAt: new Date().toISOString() });
+          })
+          .catch(() => sendResponse({ requests: [], retrievedAt: new Date().toISOString() }));
+        return true; // async sendResponse
       }
 
       if (msg.type === "GET_COOKIES") {
