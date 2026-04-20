@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <title>Track the Tracker</title>
     <style>
-      body { width: 320px; min-height: 200px; font-family: sans-serif; padding: 1rem; }
-      h1 { font-size: 1rem; margin: 0 0 0.75rem 0; }
+      body { width: 320px; min-height: 200px; font-family: sans-serif; padding: 1rem; visibility: hidden; }
+      h1 { font-size: 1rem; margin: 0; }
+      .heading-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+      #reload-btn { background: #fff7ed; border: 1px solid #f97316; cursor: pointer; padding: 5px 12px; color: #c2410c; font-size: 0.8rem; font-family: inherit; font-weight: bold; border-radius: 4px; }
+      #reload-btn:hover { background: #ffedd5; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .spinner {
         display: inline-block;
@@ -20,7 +23,10 @@
     </style>
   </head>
   <body>
-    <h1>Track the Tracker</h1>
+    <div class="heading-row">
+      <h1>Track the Tracker</h1>
+      <button id="reload-btn" title="Reload">Reload</button>
+    </div>
     <div id="app"></div>
     <script type="module" src="./main.ts"></script>
   </body>

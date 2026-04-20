@@ -14,15 +14,94 @@ import type {
 
 const app = document.getElementById("app")!;
 
+const TAB_BTN_BASE = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
+const TAB_BTN_ACTIVE = TAB_BTN_BASE + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
+const TAB_BTN_INACTIVE = TAB_BTN_BASE + "color:#555;";
+
+// Holds the active tab's id once chrome.tabs.query resolves, so event handlers
+// wired up before loadData completes can still send the correct badge messages
+let activeTabId: number | undefined;
+
+// Tracks which tab panel is currently shown so reload can restore it
+let activeTab: "cookies" | "requests" = "cookies";
+
+// The seenCategories snapshot returned by GET_ALERTS, sent back in CLEAR_PII_BADGE
+// so the background can detect categories that arrived after the popup loaded
+let activeSentCategories: string[] = [];
+
+// Pending timer that makes the body visible after a delay if data hasn't loaded yet.
+// Cancelled and replaced by revealBody() when real data arrives before the deadline
+let spinnerFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Makes the popup body visible. Cancels the spinner fallback timer if still pending.
+// Safe to call multiple times
+function revealBody(): void {
+  if (spinnerFallbackTimer !== undefined) {
+    clearTimeout(spinnerFallbackTimer);
+    spinnerFallbackTimer = undefined;
+  }
+  document.body.style.visibility = "visible";
+}
+
+// Renders the tab bar skeleton. Body stays hidden — revealBody() is called once
+// real data is ready (or after a timeout) so the spinner never briefly flashes
 function showLoading(): void {
   app.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
-      <span class="spinner"></span>
-      <span>Cookies loading. <span style="color:#aaa;">Sites with many trackers take a moment to scan.</span></span>
-    </div>`;
+    <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
+      <button id="tab-btn-cookies" style="${TAB_BTN_ACTIVE}">Cookies</button>
+      <button id="tab-btn-requests" style="${TAB_BTN_INACTIVE}">Requests</button>
+    </div>
+    <div id="panel-cookies">
+      <div style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+        <span class="spinner"></span>
+        <span>Cookies loading. <span style="color:#aaa;">Sites with many trackers take a moment to scan.</span></span>
+      </div>
+    </div>
+    <div id="panel-requests" style="display:none;"></div>
+  `;
+
+  const btnCookies = document.getElementById("tab-btn-cookies")!;
+  const btnRequests = document.getElementById("tab-btn-requests")!;
+  const panelCookies = document.getElementById("panel-cookies")!;
+  const panelRequests = document.getElementById("panel-requests")!;
+
+  btnCookies.addEventListener("click", () => {
+    activeTab = "cookies";
+    panelCookies.style.display = "";
+    panelRequests.style.display = "none";
+    btnCookies.setAttribute("style", TAB_BTN_ACTIVE);
+    btnRequests.setAttribute("style", TAB_BTN_INACTIVE);
+    if (activeTabId !== undefined) {
+      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId: activeTabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+    }
+  });
+
+  btnRequests.addEventListener("click", () => {
+    activeTab = "requests";
+    panelCookies.style.display = "none";
+    panelRequests.style.display = "";
+    btnCookies.setAttribute("style", TAB_BTN_INACTIVE);
+    btnRequests.setAttribute("style", TAB_BTN_ACTIVE);
+    document.getElementById("alert-dot")?.remove();
+    if (activeTabId !== undefined) {
+      sendMessageAsync<object>({
+        type: "CLEAR_PII_BADGE",
+        tabId: activeTabId,
+        seenAtView: activeSentCategories,
+      } satisfies ClearPiiBadgeMessage).catch(() => {});
+    }
+  });
 }
 
 showLoading();
+
+// Reload the popup so newly arrived alerts are fetched and displayed.
+// Saves the current tab to sessionStorage so it can be restored after reload —
+// sessionStorage is cleared when the popup is opened fresh (new window context)
+document.getElementById("reload-btn")!.addEventListener("click", () => {
+  sessionStorage.setItem("popup-active-tab", activeTab);
+  location.reload();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -274,6 +353,7 @@ function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 6000): Prom
 }
 
 async function loadData(url: string, tabId: number): Promise<void> {
+  activeTabId = tabId;
   try {
     const [alertsRes, postReqRes, cookiesRes] = await Promise.all([
       sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId }),
@@ -283,53 +363,46 @@ async function loadData(url: string, tabId: number): Promise<void> {
 
     const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
 
+    // Snapshot the categories the popup sees so CLEAR_PII_BADGE can detect
+    // any that arrived after this load (and therefore weren't shown to the user)
+    activeSentCategories = alertsRes.seenCategories;
+
     // Cookie store was locked and returned nothing — wait briefly and retry
     if (cookiesRes.timedOut && cookiesRes.cookies.length === 0) {
       await delay(1500);
       return loadData(url, tabId);
     }
 
-    const alertDot = hasAlerts
-      ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`
-      : "";
-
-    const tabBtnBase = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
-    const tabBtnActive = tabBtnBase + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
-    const tabBtnInactive = tabBtnBase + "color:#555;";
-
-    app.innerHTML = `
-      <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
-        <button id="tab-btn-cookies" style="${tabBtnActive}">Cookies</button>
-        <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
-      </div>
-      <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
-      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}</div>
-    `;
-
-    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP
-    const btnCookies = document.getElementById("tab-btn-cookies")!;
-    const btnRequests = document.getElementById("tab-btn-requests")!;
+    // Update only the panel content — the tab bar was already rendered by
+    // showLoading() so there is no structural flash here
     const panelCookies = document.getElementById("panel-cookies")!;
     const panelRequests = document.getElementById("panel-requests")!;
+    const btnRequests = document.getElementById("tab-btn-requests")!;
 
-    btnCookies.addEventListener("click", () => {
-      panelCookies.style.display = "";
-      panelRequests.style.display = "none";
-      btnCookies.setAttribute("style", tabBtnActive);
-      btnRequests.setAttribute("style", tabBtnInactive);
-      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
-    });
+    panelCookies.innerHTML = buildCookiesHtml(cookiesRes);
+    panelRequests.innerHTML = `
+      <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
+      ${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}
+    `;
 
-    btnRequests.addEventListener("click", () => {
-      panelCookies.style.display = "none";
-      panelRequests.style.display = "";
-      btnCookies.setAttribute("style", tabBtnInactive);
-      btnRequests.setAttribute("style", tabBtnActive);
-      document.getElementById("alert-dot")?.remove();
-      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
-    });
+    if (hasAlerts) {
+      btnRequests.innerHTML = `Requests<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`;
+    }
+    else {
+      btnRequests.textContent = "Requests";
+    }
 
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+
+    // Restore the tab the user was on before reloading, if any
+    const savedTab = sessionStorage.getItem("popup-active-tab");
+    sessionStorage.removeItem("popup-active-tab");
+    if (savedTab === "requests") {
+      document.getElementById("tab-btn-requests")!.click();
+    }
+
+    // Panels are filled — reveal the popup now that real content is in place
+    revealBody();
   }
   catch {
     // Retry on all errors — the service worker may have been killed mid-flight
@@ -347,8 +420,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 
   if (!url || tabId === undefined) {
     app.textContent = "Could not determine the current tab.";
+    revealBody();
     return;
   }
 
   loadData(url, tabId);
 });
+
+// Show the body with the loading spinner if data takes longer than 300ms.
+// This prevents a visible flash for fast loads while still showing progress
+// for slow ones
+spinnerFallbackTimer = setTimeout(() => {
+  spinnerFallbackTimer = undefined;
+  document.body.style.visibility = "visible";
+}, 300);
