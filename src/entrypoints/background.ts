@@ -44,6 +44,13 @@ const tabAlertsViewed = new Set<number>();
 // Temporary storage for POST payloads between onBeforeRequest and onSendHeaders
 const pendingPayloads = new Map<string, string>(); // requestId -> payload string
 
+// Per-tab debounce timers for cookie badge updates
+const badgeUpdateTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+// Tracks which PII categories (e.g. "pii:email", "location_tracking") have already
+// triggered an orange badge per tab so the badge only re-shows for genuinely new categories
+const tabSeenPiiCategories = new Map<number, Set<string>>();
+
 // Maximum top-level keys stored from a JSON payload for display in the popup
 const PAYLOAD_PREVIEW_MAX_KEYS = 30;
 // Maximum characters stored for non-JSON payloads
@@ -69,7 +76,32 @@ function clearTabData(tabId: number): void {
   tabPostRequests.delete(tabId);
   tabBadgeState.delete(tabId);  // reset so fresh indicator can appear on next page
   tabAlertsViewed.delete(tabId);
-  chrome.storage.session.remove([`alerts_${tabId}`, `requests_${tabId}`, `alertsViewed_${tabId}`]).catch(() => {});
+  tabSeenPiiCategories.delete(tabId);
+  // Cancel any pending cookie-badge debounce so it doesn't fire on the new page
+  const timer = badgeUpdateTimers.get(tabId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    badgeUpdateTimers.delete(tabId);
+  }
+  chrome.storage.session.remove([
+    `alerts_${tabId}`,
+    `requests_${tabId}`,
+    `alertsViewed_${tabId}`,
+    `seenCategories_${tabId}`,
+  ]).catch(() => {});
+}
+
+// Returns the category keys for a PII or location alert.
+// Each key is a stable string that identifies a detected data category —
+// used to decide whether the orange badge should re-appear
+function getPiiCategoryKeys(alert: AlertInfo): string[] {
+  if (alert.type === "location_tracking") {
+    return ["location_tracking"];
+  }
+  if (alert.type === "pii_exfiltration") {
+    return alert.labels.map((l) => `pii:${l}`);
+  }
+  return [];
 }
 
 function addAlert(tabId: number, alert: AlertInfo): void {
@@ -80,8 +112,21 @@ function addAlert(tabId: number, alert: AlertInfo): void {
     tabAlerts.set(tabId, alerts);
     // Persist so data survives service worker restarts within the browser session
     chrome.storage.session.set({ [`alerts_${tabId}`]: alerts }).catch(() => {});
+
     if (alert.type === "pii_exfiltration" || alert.type === "location_tracking") {
-      setPiiBadge(tabId);
+      const seenCategories = tabSeenPiiCategories.get(tabId) ?? new Set<string>();
+      const newKeys = getPiiCategoryKeys(alert).filter((k) => !seenCategories.has(k));
+      if (newKeys.length > 0) {
+        for (const k of newKeys) {
+          seenCategories.add(k);
+        }
+        tabSeenPiiCategories.set(tabId, seenCategories);
+        chrome.storage.session.set({ [`seenCategories_${tabId}`]: [...seenCategories] }).catch(() => {});
+        // Reset viewed state so the popup re-shows the orange dot for the new category
+        tabAlertsViewed.delete(tabId);
+        chrome.storage.session.set({ [`alertsViewed_${tabId}`]: false }).catch(() => {});
+        setPiiBadge(tabId);
+      }
     }
   }
 }
@@ -396,6 +441,14 @@ async function updateBadge(tabId: number, count: number): Promise<void> {
   if (count <= 0 || tabBadgeState.has(tabId)) {
     return;
   }
+  // Fallback: if the service worker restarted before startup restoration finished,
+  // check session storage directly so a stale cookie badge can't overwrite orange
+  const stored = await chrome.storage.session.get(`alerts_${tabId}`).catch(() => ({}));
+  const storedAlerts = ((stored as Record<string, unknown>)[`alerts_${tabId}`] as AlertInfo[]) || [];
+  if (storedAlerts.some((a) => a.type === "pii_exfiltration" || a.type === "location_tracking")) {
+    tabBadgeState.set(tabId, "pii");
+    return;
+  }
   try {
     await chrome.action.setBadgeBackgroundColor({ color: "#eab308", tabId });
     await chrome.action.setBadgeTextColor({ color: "#ffffff", tabId });
@@ -423,10 +476,6 @@ async function setPiiBadge(tabId: number): Promise<void> {
   }
 }
 
-// Per-tab debounce timers so the badge updates after the burst of webRequest
-// events following page load settles, rather than only at tabs.onUpdated complete
-const badgeUpdateTimers = new Map<number, ReturnType<typeof setTimeout>>();
-
 function scheduleBadgeUpdate(tabId: number): void {
   const existing = badgeUpdateTimers.get(tabId);
   if (existing !== undefined) {
@@ -453,6 +502,38 @@ function scheduleBadgeUpdate(tabId: number): void {
 
 export default defineBackground(() => {
   console.log("Track the Tracker background started.");
+
+  // Restore in-memory state from session storage after a service worker restart.
+  // Without this, tabBadgeState is empty on restart, letting cookie badge overwrite orange
+  (async () => {
+    const tabs = await chrome.tabs.query({}).catch(() => [] as chrome.tabs.Tab[]);
+    for (const tab of tabs) {
+      if (!tab.id) {
+        continue;
+      }
+      const stored = await chrome.storage.session.get([
+        `alerts_${tab.id}`,
+        `seenCategories_${tab.id}`,
+        `alertsViewed_${tab.id}`,
+      ]).catch(() => ({}));
+      const alerts = ((stored as Record<string, unknown>)[`alerts_${tab.id}`] as AlertInfo[]) || [];
+      const seenCategories = ((stored as Record<string, unknown>)[`seenCategories_${tab.id}`] as string[]) || [];
+      const alertsViewed = ((stored as Record<string, unknown>)[`alertsViewed_${tab.id}`] as boolean) || false;
+      if (alerts.length > 0) {
+        tabAlerts.set(tab.id, alerts);
+        const hasPii = alerts.some((a) => a.type === "pii_exfiltration" || a.type === "location_tracking");
+        if (hasPii) {
+          tabBadgeState.set(tab.id, "pii");
+        }
+      }
+      if (seenCategories.length > 0) {
+        tabSeenPiiCategories.set(tab.id, new Set(seenCategories));
+      }
+      if (alertsViewed) {
+        tabAlertsViewed.add(tab.id);
+      }
+    }
+  })();
 
   // -------------------------------------------------------------------------
   // THIRD-PARTY ORIGIN TRACKING — observe outgoing requests via webRequest
