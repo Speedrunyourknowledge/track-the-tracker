@@ -337,36 +337,59 @@ function hasField(payload: string, field: string): boolean {
 
 // Extracts unique fields from a payload for display in the popup.
 // For JSON, collects keys up to 2 levels deep; for URL-encoded, returns parameter names.
+// Handles both standard JSON and NDJSON (newline-delimited JSON, used by e.g. Datadog RUM).
 // Capped at 20 keys to keep the UI manageable
 function extractFields(payload: string): string[] {
   const keys = new Set<string>();
 
-  // Try JSON
-  try {
-    const parsed: unknown = JSON.parse(payload);
-    function collect(value: unknown, depth: number): void {
-      if (depth > 2 || keys.size >= 20) {
-        return;
-      }
-      if (Array.isArray(value)) {
-        if (value.length > 0) {
-          collect(value[0], depth);
-        }
-      } 
-      else if (typeof value === "object" && value !== null) {
-        for (const k of Object.keys(value as Record<string, unknown>)) {
-          keys.add(k);
-          collect((value as Record<string, unknown>)[k], depth + 1);
-        }
+  // Collects object keys up to 2 levels deep from a parsed JSON value.
+  // Arrays are flattened (first element only) without consuming a depth level
+  function collect(value: unknown, depth: number): void {
+    if (depth > 2 || keys.size >= 20) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (value.length > 0) {
+        collect(value[0], depth);
       }
     }
+    else if (typeof value === "object" && value !== null) {
+      for (const k of Object.keys(value as Record<string, unknown>)) {
+        keys.add(k);
+        collect((value as Record<string, unknown>)[k], depth + 1);
+      }
+    }
+  }
+
+  const trimmed = payload.trimStart();
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+
+  // Try standard JSON first
+  try {
+    const parsed: unknown = JSON.parse(payload);
     collect(parsed, 0);
     if (keys.size > 0) {
       return [...keys];
     }
-  } 
-  catch {
-    // Not valid JSON — fall through to URL-encoded
+  }
+  catch { /* not valid single-object JSON */ }
+
+  // Try NDJSON — collect keys from every line so batched events (e.g. Datadog RUM)
+  // are all analysed. Return early even if empty so a JSON-like payload never falls
+  // through to the URL-encoded parser (which would treat the whole body as one key)
+  if (looksLikeJson) {
+    for (const line of payload.split("\n")) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        continue;
+      }
+      try {
+        const parsed: unknown = JSON.parse(trimmedLine);
+        collect(parsed, 0);
+      }
+      catch { /* skip malformed lines */ }
+    }
+    return [...keys];
   }
 
   // Try URL-encoded form data
@@ -378,7 +401,7 @@ function extractFields(payload: string): string[] {
         break;
       }
     }
-  } 
+  }
   catch {
     // Ignore
   }
