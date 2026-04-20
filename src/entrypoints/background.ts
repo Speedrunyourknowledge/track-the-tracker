@@ -185,6 +185,12 @@ const AUTH_PAYLOAD_FIELDS = [
 // too (e.g. /api/get-token-info). The payload field check handles those flows
 const AUTH_PATH_RE = /\/oauth2?(?:\/|$)|\/saml(?:\/|$)|\/connect\/token(?:\/|$)/i;
 
+// Matches hostnames whose subdomain (or subdomain segment) is a well-known
+// identity / access-management term. Checks both dot-separated segments
+// (auth.example.com) and hyphen-separated ones (api-iam.example.com).
+// These subdomains are almost exclusively used by auth services, not trackers
+const AUTH_SUBDOMAIN_RE = /(?:^|[.-])(iam|sso|idp|auth|accounts|login|signin|identity)(?=[.-]|$)/i;
+
 // Matches page-visit fields while excluding generic fields like "pageFormat"
 const PAGE_RE = /^page(?:s|url|_url|path|_path|title|_title|view|_view|name|_name|ref|_ref|referrer|_referrer|hit|_hit)?$|^referrer(?:url|_url)?$/i;
 
@@ -372,11 +378,16 @@ function extractFields(payload: string): string[] {
 }
 
 // Returns true if the request looks like an authentication handshake.
-// Uses OAuth payload fields and path heuristics rather than a domain allowlist,
-// so it works across all identity providers
+// Uses OAuth payload fields, path heuristics, and subdomain naming conventions
+// rather than a domain allowlist, so it works across all identity providers
 function isAuthRequest(url: string, payload: string): boolean {
   try {
-    if (AUTH_PATH_RE.test(new URL(url).pathname)) {
+    const parsed = new URL(url);
+    if (AUTH_PATH_RE.test(parsed.pathname)) {
+      return true;
+    }
+    // e.g. api-iam.intercom.io, auth.stripe.com, sso.okta.com
+    if (AUTH_SUBDOMAIN_RE.test(parsed.hostname)) {
       return true;
     }
   } 
