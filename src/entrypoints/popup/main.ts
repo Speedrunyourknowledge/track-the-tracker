@@ -22,8 +22,26 @@ const TAB_BTN_INACTIVE = TAB_BTN_BASE + "color:#555;";
 // wired up before loadData completes can still send the correct badge messages
 let activeTabId: number | undefined;
 
-// Renders the tab bar skeleton immediately so there is no structural flash
-// when loadData later replaces the spinner with real content
+// The seenCategories snapshot returned by GET_ALERTS, sent back in CLEAR_PII_BADGE
+// so the background can detect categories that arrived after the popup loaded
+let activeSentCategories: string[] = [];
+
+// Pending timer that makes the body visible after a delay if data hasn't loaded yet.
+// Cancelled and replaced by revealBody() when real data arrives before the deadline
+let spinnerFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Makes the popup body visible. Cancels the spinner fallback timer if still pending.
+// Safe to call multiple times
+function revealBody(): void {
+  if (spinnerFallbackTimer !== undefined) {
+    clearTimeout(spinnerFallbackTimer);
+    spinnerFallbackTimer = undefined;
+  }
+  document.body.style.visibility = "visible";
+}
+
+// Renders the tab bar skeleton. Body stays hidden — revealBody() is called once
+// real data is ready (or after a timeout) so the spinner never briefly flashes
 function showLoading(): void {
   app.innerHTML = `
     <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
@@ -38,8 +56,6 @@ function showLoading(): void {
     </div>
     <div id="panel-requests" style="display:none;"></div>
   `;
-
-  document.body.style.visibility = "visible";
 
   const btnCookies = document.getElementById("tab-btn-cookies")!;
   const btnRequests = document.getElementById("tab-btn-requests")!;
@@ -63,7 +79,11 @@ function showLoading(): void {
     btnRequests.setAttribute("style", TAB_BTN_ACTIVE);
     document.getElementById("alert-dot")?.remove();
     if (activeTabId !== undefined) {
-      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId: activeTabId } satisfies ClearPiiBadgeMessage).catch(() => {});
+      sendMessageAsync<object>({
+        type: "CLEAR_PII_BADGE",
+        tabId: activeTabId,
+        seenAtView: activeSentCategories,
+      } satisfies ClearPiiBadgeMessage).catch(() => {});
     }
   });
 }
@@ -330,6 +350,10 @@ async function loadData(url: string, tabId: number): Promise<void> {
 
     const hasAlerts = alertsRes.alerts.length > 0 && !alertsRes.alertsViewed;
 
+    // Snapshot the categories the popup sees so CLEAR_PII_BADGE can detect
+    // any that arrived after this load (and therefore weren't shown to the user)
+    activeSentCategories = alertsRes.seenCategories;
+
     // Cookie store was locked and returned nothing — wait briefly and retry
     if (cookiesRes.timedOut && cookiesRes.cookies.length === 0) {
       await delay(1500);
@@ -356,6 +380,8 @@ async function loadData(url: string, tabId: number): Promise<void> {
     }
 
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+    // Panels are filled — reveal the popup now that real content is in place
+    revealBody();
   }
   catch {
     // Retry on all errors — the service worker may have been killed mid-flight
@@ -373,8 +399,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 
   if (!url || tabId === undefined) {
     app.textContent = "Could not determine the current tab.";
+    revealBody();
     return;
   }
 
   loadData(url, tabId);
 });
+
+// Show the body with the loading spinner if data takes longer than 300ms.
+// This prevents a visible flash for fast loads while still showing progress
+// for slow ones
+spinnerFallbackTimer = setTimeout(() => {
+  spinnerFallbackTimer = undefined;
+  document.body.style.visibility = "visible";
+}, 300);

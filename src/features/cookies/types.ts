@@ -116,8 +116,10 @@ export interface GetAlertsMessage {
 /** Response returned by the background for a GET_ALERTS message */
 export interface GetAlertsResponse {
   alerts: AlertInfo[];
-  /** True when the user has already opened the Requests tab for this page load */
+  /** True when the user has already seen all current PII/location alert categories */
   alertsViewed: boolean;
+  /** PII/location category keys detected this page load — send back in CLEAR_PII_BADGE to avoid race conditions */
+  seenCategories: string[];
 }
 
 /**
@@ -150,6 +152,9 @@ export interface GetPostRequestsMessage {
 export interface ClearPiiBadgeMessage {
   type: "CLEAR_PII_BADGE";
   tabId: number;
+  /** The seenCategories snapshot the popup held when the user clicked Requests.
+   * Used to detect categories that arrived after the popup loaded */
+  seenAtView: string[];
 }
 
 /** Sent when the user views the Cookies tab — tells the background to dismiss the cookie badge */

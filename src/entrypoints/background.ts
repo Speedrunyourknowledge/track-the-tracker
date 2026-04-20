@@ -839,14 +839,16 @@ export default defineBackground(() => {
       const msg = message as { type?: string };
       if (msg.type === "GET_ALERTS") {
         const alertsMsg = message as GetAlertsMessage;
+        const tabId = alertsMsg.tabId;
         chrome.storage.session
-          .get([`alerts_${alertsMsg.tabId}`, `alertsViewed_${alertsMsg.tabId}`])
+          .get([`alerts_${tabId}`, `alertsViewed_${tabId}`, `seenCategories_${tabId}`])
           .then((data) => {
-            const alerts = (data[`alerts_${alertsMsg.tabId}`] as AlertInfo[]) || [];
-            const alertsViewed = (data[`alertsViewed_${alertsMsg.tabId}`] as boolean) || false;
-            sendResponse({ alerts, alertsViewed });
+            const alerts = (data[`alerts_${tabId}`] as AlertInfo[]) || [];
+            const alertsViewed = (data[`alertsViewed_${tabId}`] as boolean) || false;
+            const seenCategories = (data[`seenCategories_${tabId}`] as string[]) || [];
+            sendResponse({ alerts, alertsViewed, seenCategories });
           })
-          .catch(() => sendResponse({ alerts: [], alertsViewed: false }));
+          .catch(() => sendResponse({ alerts: [], alertsViewed: false, seenCategories: [] }));
         return true; // async sendResponse
       }
 
@@ -864,16 +866,23 @@ export default defineBackground(() => {
 
       if (msg.type === "CLEAR_PII_BADGE") {
         const clearMsg = message as ClearPiiBadgeMessage;
-        const state = tabBadgeState.get(clearMsg.tabId);
-        if (state === "pii") {
-          chrome.action.setBadgeText({ text: "", tabId: clearMsg.tabId });
-          // Keep state as "pii" so neither the cookie badge nor the PII badge
-          // can reappear for this page load after the user has dismissed it
+        const tabId = clearMsg.tabId;
+        const seenAtView = new Set(clearMsg.seenAtView);
+        const currentSeen = tabSeenPiiCategories.get(tabId) ?? new Set<string>();
+        // If new categories arrived after the popup loaded (not visible to the user when
+        // they clicked Requests), keep/re-show the badge so they are not silently dropped
+        const hasUnviewedCategories = [...currentSeen].some(k => !seenAtView.has(k));
+        if (hasUnviewedCategories) {
+          // New categories slipped in during the popup session — ensure badge is visible
+          setPiiBadge(tabId).catch(() => {});
+          // Do not mark alerts as viewed; the dot should remain for the next popup open
         }
-        // Mark alerts as viewed so the orange dot is not re-shown when the
-        // popup is closed and reopened
-        tabAlertsViewed.add(clearMsg.tabId);
-        chrome.storage.session.set({ [`alertsViewed_${clearMsg.tabId}`]: true }).catch(() => {});
+        else {
+          // All detected categories were visible when the user clicked Requests
+          chrome.action.setBadgeText({ text: "", tabId }).catch(() => {});
+          tabAlertsViewed.add(tabId);
+          chrome.storage.session.set({ [`alertsViewed_${tabId}`]: true }).catch(() => {});
+        }
         sendResponse({});
         return false;
       }
