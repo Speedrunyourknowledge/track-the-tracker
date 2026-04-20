@@ -217,7 +217,7 @@ const PHONE_FIELD_NAMES = [
   "sha256_phone_number",
 ];
 
-// High-precision location fields — any one of these alone is meaningful tracking
+// High-precision fields — any one of these is meaningful tracking
 const LOCATION_FIELDS_HIGH = [
   "latitude",
   "longitude",
@@ -233,8 +233,8 @@ const LOCATION_FIELDS_HIGH = [
 ];
 
 // Low-precision fields — routinely sent for billing and localization purposes
-// (e.g. showing the correct currency or legal text). Only flagged when a
-// high-precision field is also present
+// (e.g. showing the correct currency or legal text). Always highlighted in the
+// requests list, but do not trigger a Privacy Alert on their own
 const LOCATION_FIELDS_LOW = [
   "country",
   "state",
