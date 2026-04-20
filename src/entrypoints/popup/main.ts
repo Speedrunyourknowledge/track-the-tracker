@@ -14,12 +14,58 @@ import type {
 
 const app = document.getElementById("app")!;
 
+const TAB_BTN_BASE = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
+const TAB_BTN_ACTIVE = TAB_BTN_BASE + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
+const TAB_BTN_INACTIVE = TAB_BTN_BASE + "color:#555;";
+
+// Holds the active tab's id once chrome.tabs.query resolves, so event handlers
+// wired up before loadData completes can still send the correct badge messages
+let activeTabId: number | undefined;
+
+// Renders the tab bar skeleton immediately so there is no structural flash
+// when loadData later replaces the spinner with real content
 function showLoading(): void {
   app.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
-      <span class="spinner"></span>
-      <span>Cookies loading. <span style="color:#aaa;">Sites with many trackers take a moment to scan.</span></span>
-    </div>`;
+    <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
+      <button id="tab-btn-cookies" style="${TAB_BTN_ACTIVE}">Cookies</button>
+      <button id="tab-btn-requests" style="${TAB_BTN_INACTIVE}">Requests</button>
+    </div>
+    <div id="panel-cookies">
+      <div style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+        <span class="spinner"></span>
+        <span>Cookies loading. <span style="color:#aaa;">Sites with many trackers take a moment to scan.</span></span>
+      </div>
+    </div>
+    <div id="panel-requests" style="display:none;"></div>
+  `;
+
+  document.body.style.visibility = "visible";
+
+  const btnCookies = document.getElementById("tab-btn-cookies")!;
+  const btnRequests = document.getElementById("tab-btn-requests")!;
+  const panelCookies = document.getElementById("panel-cookies")!;
+  const panelRequests = document.getElementById("panel-requests")!;
+
+  btnCookies.addEventListener("click", () => {
+    panelCookies.style.display = "";
+    panelRequests.style.display = "none";
+    btnCookies.setAttribute("style", TAB_BTN_ACTIVE);
+    btnRequests.setAttribute("style", TAB_BTN_INACTIVE);
+    if (activeTabId !== undefined) {
+      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId: activeTabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+    }
+  });
+
+  btnRequests.addEventListener("click", () => {
+    panelCookies.style.display = "none";
+    panelRequests.style.display = "";
+    btnCookies.setAttribute("style", TAB_BTN_INACTIVE);
+    btnRequests.setAttribute("style", TAB_BTN_ACTIVE);
+    document.getElementById("alert-dot")?.remove();
+    if (activeTabId !== undefined) {
+      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId: activeTabId } satisfies ClearPiiBadgeMessage).catch(() => {});
+    }
+  });
 }
 
 showLoading();
@@ -274,6 +320,7 @@ function sendMessageAsync<T = unknown>(message: unknown, timeoutMs = 6000): Prom
 }
 
 async function loadData(url: string, tabId: number): Promise<void> {
+  activeTabId = tabId;
   try {
     const [alertsRes, postReqRes, cookiesRes] = await Promise.all([
       sendMessageAsync<GetAlertsResponse>({ type: "GET_ALERTS", tabId }),
@@ -289,45 +336,24 @@ async function loadData(url: string, tabId: number): Promise<void> {
       return loadData(url, tabId);
     }
 
-    const alertDot = hasAlerts
-      ? `<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`
-      : "";
-
-    const tabBtnBase = "padding:6px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-bottom:2px solid transparent;font-family:inherit;";
-    const tabBtnActive = tabBtnBase + "border-bottom-color:#f97316;font-weight:bold;color:#c2410c;";
-    const tabBtnInactive = tabBtnBase + "color:#555;";
-
-    app.innerHTML = `
-      <div id="tab-bar" style="display:flex;border-bottom:1px solid #e5e7eb;margin-bottom:10px;">
-        <button id="tab-btn-cookies" style="${tabBtnActive}">Cookies</button>
-        <button id="tab-btn-requests" style="${tabBtnInactive}">Requests${alertDot}</button>
-      </div>
-      <div id="panel-cookies">${buildCookiesHtml(cookiesRes)}</div>
-      <div id="panel-requests" style="display:none;"><p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}</div>
-    `;
-
-    // Attach tab switching listeners — inline onclick is blocked by MV3 CSP
-    const btnCookies = document.getElementById("tab-btn-cookies")!;
-    const btnRequests = document.getElementById("tab-btn-requests")!;
+    // Update only the panel content — the tab bar was already rendered by
+    // showLoading() so there is no structural flash here
     const panelCookies = document.getElementById("panel-cookies")!;
     const panelRequests = document.getElementById("panel-requests")!;
+    const btnRequests = document.getElementById("tab-btn-requests")!;
 
-    btnCookies.addEventListener("click", () => {
-      panelCookies.style.display = "";
-      panelRequests.style.display = "none";
-      btnCookies.setAttribute("style", tabBtnActive);
-      btnRequests.setAttribute("style", tabBtnInactive);
-      sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
-    });
+    panelCookies.innerHTML = buildCookiesHtml(cookiesRes);
+    panelRequests.innerHTML = `
+      <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(postReqRes.retrievedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
+      ${buildAlertsHtml(alertsRes)}${buildPostRequestsHtml(postReqRes, alertsRes)}
+    `;
 
-    btnRequests.addEventListener("click", () => {
-      panelCookies.style.display = "none";
-      panelRequests.style.display = "";
-      btnCookies.setAttribute("style", tabBtnInactive);
-      btnRequests.setAttribute("style", tabBtnActive);
-      document.getElementById("alert-dot")?.remove();
-      sendMessageAsync<object>({ type: "CLEAR_PII_BADGE", tabId } satisfies ClearPiiBadgeMessage).catch(() => {});
-    });
+    if (hasAlerts) {
+      btnRequests.innerHTML = `Requests<span id="alert-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f97316;margin-left:5px;vertical-align:middle;position:relative;top:-1px;"></span>`;
+    }
+    else {
+      btnRequests.textContent = "Requests";
+    }
 
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
   }
