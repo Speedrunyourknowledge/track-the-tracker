@@ -22,6 +22,9 @@ const TAB_BTN_INACTIVE = TAB_BTN_BASE + "color:#555;";
 // wired up before loadData completes can still send the correct badge messages
 let activeTabId: number | undefined;
 
+// Tracks which tab panel is currently shown so reload can restore it
+let activeTab: "cookies" | "requests" = "cookies";
+
 // The seenCategories snapshot returned by GET_ALERTS, sent back in CLEAR_PII_BADGE
 // so the background can detect categories that arrived after the popup loaded
 let activeSentCategories: string[] = [];
@@ -63,6 +66,7 @@ function showLoading(): void {
   const panelRequests = document.getElementById("panel-requests")!;
 
   btnCookies.addEventListener("click", () => {
+    activeTab = "cookies";
     panelCookies.style.display = "";
     panelRequests.style.display = "none";
     btnCookies.setAttribute("style", TAB_BTN_ACTIVE);
@@ -73,6 +77,7 @@ function showLoading(): void {
   });
 
   btnRequests.addEventListener("click", () => {
+    activeTab = "requests";
     panelCookies.style.display = "none";
     panelRequests.style.display = "";
     btnCookies.setAttribute("style", TAB_BTN_INACTIVE);
@@ -89,6 +94,14 @@ function showLoading(): void {
 }
 
 showLoading();
+
+// Reload the popup so newly arrived alerts are fetched and displayed.
+// Saves the current tab to sessionStorage so it can be restored after reload —
+// sessionStorage is cleared when the popup is opened fresh (new window context)
+document.getElementById("reload-btn")!.addEventListener("click", () => {
+  sessionStorage.setItem("popup-active-tab", activeTab);
+  location.reload();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -380,6 +393,14 @@ async function loadData(url: string, tabId: number): Promise<void> {
     }
 
     sendMessageAsync<object>({ type: "CLEAR_COOKIE_BADGE", tabId } satisfies ClearCookieBadgeMessage).catch(() => {});
+
+    // Restore the tab the user was on before reloading, if any
+    const savedTab = sessionStorage.getItem("popup-active-tab");
+    sessionStorage.removeItem("popup-active-tab");
+    if (savedTab === "requests") {
+      document.getElementById("tab-btn-requests")!.click();
+    }
+
     // Panels are filled — reveal the popup now that real content is in place
     revealBody();
   }
