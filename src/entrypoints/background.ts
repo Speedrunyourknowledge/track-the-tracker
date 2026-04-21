@@ -6,6 +6,7 @@
 
 import { getDomain } from "tldts";
 import { queryCookiesWithThirdParty } from "../features/cookies/cookieQuery";
+import { HARMLESS_TRACKER_CATEGORIES } from "../features/cookies/trackerLookup";
 import {
   recordThirdPartyOrigin,
   clearThirdPartyOrigins,
@@ -533,7 +534,7 @@ function scheduleBadgeUpdate(tabId: number): void {
       }
       queryCookiesWithThirdParty(tab.url, tabId)
         .then((result) => {
-          const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie && c.trackerCategory !== null).length;
+          const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie && c.trackerCategory !== null && !HARMLESS_TRACKER_CATEGORIES.has(c.trackerCategory)).length;
           updateBadge(tabId, count);
         })
         .catch((err) => console.error("[Track the Tracker] Deferred badge update failed:", err));

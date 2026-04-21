@@ -9,6 +9,11 @@ import trackersData from "../../data/trackers.json";
 type TrackerList = Array<Record<string, Record<string, string[]>>>;
 type Categories = Record<string, TrackerList>;
 
+// Categories that appear in the tracker list but serve a benign purpose.
+// Cookies in these categories are still shown under Trackers but are styled
+// as harmless (yellow pill) and do not trigger the yellow badge
+export const HARMLESS_TRACKER_CATEGORIES = new Set(["Anti-fraud", "ConsentManagers"]);
+
 // Map from eTLD+1 (registered domain) → disconnect.me category name.
 // Built once at module load from the full tracker list
 const trackerDomainMap = new Map<string, string>();
