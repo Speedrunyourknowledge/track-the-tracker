@@ -17,10 +17,25 @@ Most users unknowingly authorize cross-site tracking by clicking "Accept All" on
 
 ### Cookies tab
 
-Shows all cookies currently active for the page, split into:
-- **Third-party (trackers)** — cookies from domains other than the current page, flagged in red
-- **Third-party (security/harmless)** — known anti-abuse tokens (e.g. Google AEC) that are third-party but not behavioral trackers, flagged in yellow
-- **First-party** — cookies from the current site itself, flagged in green
+The cookies tab shows all cookies currently active for the page. Third-party cookies are checked against the [disconnect.me tracker list](https://github.com/disconnectme/disconnect-tracking-protection) — a public, well-maintained database of domains that collect data about users across multiple websites they don't own. Cookies whose domain matches an entry in that list are classified as trackers.
+
+Cookies are ordered from most invasive to least invasive:
+
+```
+▼ Third-party (N)
+    ▼ Trackers (N)          — confirmed by disconnect.me
+    ▶ Unlabeled (N)         — third-party but not in the tracker list
+    ▶ Security (Harmless)   — known anti-abuse cookies
+
+▶ First-party (N)   — cookies from the current site
+```
+
+Each tracking cookie displays a category that indicates its overall purpose. You can view the full list of categories and their descriptions [here](https://disconnect.me/trackerprotection#categories_of_trackers). Two categories are treated as harmless despite appearing in the tracker list and are displayed with a yellow label instead of orange:
+
+- **Anti-fraud** — used by services that detect and prevent online fraud
+- **ConsentManagers** — used to manage cookie consent preferences
+
+Security cookies are used for website security (e.g., bot prevention), not tracking.
 
 ### Requests tab
 
@@ -33,7 +48,8 @@ Shows third-party POST requests observed during the current page load, with fiel
 ### Badge
 
 The extension icon shows a `!` badge when tracking activity is detected on the active tab:
-- **Yellow** — third-party tracking cookies are present
+- **Yellow** — at least one third-party **tracking** cookie is present
+  - Cookies in "harmless" categories do not trigger this badge
 - **Orange** — a POST request containing PII or location data was sent to a third-party domain
 
 The badge is cleared when the user opens the relevant tab in the popup.
@@ -57,12 +73,16 @@ src/
 │       ├─ index.html        # Extension popup shell
 │       └─ main.ts           # Popup UI — two-tab layout for Cookies and Requests
 │
+├─ data/
+│   └─ trackers.json         # disconnect.me tracker list
+│
 └─ features/
     └─ cookies/
         ├─ types.ts              # Shared TypeScript interfaces for messages and data structures
         ├─ cookieQuery.ts        # Queries first-party + observed third-party cookies and merges them
         ├─ thirdPartyDomains.ts  # chrome.storage.session store of third-party origins per tab
-        └─ securityCookies.ts    # Allowlist of known harmless security/anti-abuse cookies
+        ├─ securityCookies.ts    # Allowlist of known harmless security/anti-abuse cookies
+        └─ trackerLookup.ts      # Builds a lookup table of known tracker domains
 
 wxt.config.ts          # Extension manifest & permissions
 ```
@@ -77,9 +97,9 @@ wxt.config.ts          # Extension manifest & permissions
 2. **`chrome.tabs.onUpdated`** clears per-tab state on navigation start and re-queries cookies on page load complete.
 
 3. When the **popup opens**, it sends three messages to the background:
-   - `GET_COOKIES` → background calls `queryCookiesWithThirdParty` (first-party query + one query per observed third-party origin)
-   - `GET_ALERTS` → returns the tab's accumulated alert list
-   - `GET_POST_REQUESTS` → returns every third-party POST observed this page load
+   - `GET_COOKIES` — background calls `queryCookiesWithThirdParty` (first-party query + one query per observed third-party origin)
+   - `GET_ALERTS` — returns the tab's accumulated alert list
+   - `GET_POST_REQUESTS` — returns every third-party POST observed this page load
 
 ## Getting Started
 
@@ -148,7 +168,7 @@ In development mode, WXT will open a Chrome instance with the extension already 
 ## Success Criteria
 
 - ✅ Reads the contents of the browser's cookie jar
-- ✅ Identifies third-party tracking cookies and separates them from harmless security cookies
+- ✅ Identifies third-party tracking cookies by referencing a list of known trackers
 - ✅ Detects outgoing third-party tracking requests
 - ✅ Notifies the user when a tracking request contains PII (de-anonymization alert)
 - ✅ Detects location data in POST request payloads
