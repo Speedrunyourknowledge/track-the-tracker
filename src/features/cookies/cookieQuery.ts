@@ -8,6 +8,7 @@ import { getDomain } from "tldts";
 import type { CookieInfo, CookieQueryResult } from "./types";
 import { getThirdPartyOrigins } from "./thirdPartyDomains";
 import { isSecurityCookie } from "./securityCookies";
+import { lookupTrackerCategory } from "./trackerLookup";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,6 +68,7 @@ function mapCookie(c: chrome.cookies.Cookie, pageUrl: string): CookieInfo {
     sameSite: c.sameSite,
     isThirdParty: isThirdPartyCookieDomain(c.domain, pageUrl),
     isSecurityCookie: isSecurityCookie(c.name, c.domain),
+    trackerCategory: lookupTrackerCategory(c.domain),
   };
 }
 

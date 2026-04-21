@@ -533,7 +533,7 @@ function scheduleBadgeUpdate(tabId: number): void {
       }
       queryCookiesWithThirdParty(tab.url, tabId)
         .then((result) => {
-          const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie).length;
+          const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie && c.trackerCategory !== null).length;
           updateBadge(tabId, count);
         })
         .catch((err) => console.error("[Track the Tracker] Deferred badge update failed:", err));

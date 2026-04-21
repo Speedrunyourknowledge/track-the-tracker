@@ -57,6 +57,13 @@ export interface CookieInfo {
    * (e.g. Google AEC, __Secure-YEC). Still third-party, but not a tracker
    */
   isSecurityCookie: boolean;
+
+  /**
+   * The disconnect.me tracker category if this cookie's domain appears in their
+   * published tracker list (e.g. "Advertising", "Analytics", "Social"), or null
+   * if the domain is not a known tracker
+   */
+  trackerCategory: string | null;
 }
 
 /**

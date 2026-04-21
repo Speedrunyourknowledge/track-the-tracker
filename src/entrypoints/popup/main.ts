@@ -210,18 +210,27 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
 
   const firstParty = cookies.filter((c) => !c.isThirdParty).sort(byDomain);
   const thirdParty = cookies.filter((c) => c.isThirdParty);
-  const trackers = thirdParty.filter((c) => !c.isSecurityCookie).sort(byDomain);
+  const labeled = thirdParty.filter((c) => !c.isSecurityCookie && c.trackerCategory !== null).sort(byDomain);
+  const unlabeled = thirdParty.filter((c) => !c.isSecurityCookie && c.trackerCategory === null).sort(byDomain);
   const securityCookies = thirdParty.filter((c) => c.isSecurityCookie).sort(byDomain);
 
-  const thirdPartySummaryStyle = trackers.length > 0
-    ? "cursor:pointer;font-weight:bold;color:#b91c1c;"
-    : "cursor:pointer;font-weight:bold;";
+  const trackersSubsection = labeled.length > 0 ? `
+    <details open style="margin-top:8px;margin-left:8px;">
+      <summary style="cursor:pointer;font-weight:bold;color:#b91c1c;">
+        Trackers (${labeled.length})
+      </summary>
+      ${cookieListHtml(labeled)}
+    </details>
+  ` : "";
 
-  const trackerList = trackers.length > 0
-    ? cookieListHtml(trackers)
-    : securityCookies.length > 0
-      ? ""
-      : "<p style='margin:4px 0;color:#888'>None</p>";
+  const unlabeledSubsection = unlabeled.length > 0 ? `
+    <details style="margin-top:8px;margin-left:8px;">
+      <summary style="cursor:pointer;font-weight:bold;color:#6b7280;">
+        Unlabeled (${unlabeled.length})
+      </summary>
+      ${cookieListHtml(unlabeled)}
+    </details>
+  ` : "";
 
   const securitySubsection = securityCookies.length > 0 ? `
     <details style="margin-top:8px;margin-left:8px;">
@@ -232,6 +241,8 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
     </details>
   ` : "";
 
+  const hasNoSubsections = labeled.length === 0 && unlabeled.length === 0 && securityCookies.length === 0;
+
   // Open third-party by default if present, otherwise open first-party
   const hasThirdParty = thirdParty.length > 0;
   const thirdPartyOpen = hasThirdParty ? " open" : "";
@@ -239,13 +250,12 @@ function buildCookiesHtml(response: GetCookiesResponse): string {
 
   return `
     <p style="font-size:0.75rem;color:#888;margin:0 0 6px">Retrieved at ${new Date(queriedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
-    <p style="font-weight:bold;margin:8px 0 4px;">
-      All cookies — ${thirdParty.length} third-party, ${firstParty.length} first-party
-    </p>
     <details${thirdPartyOpen} style="margin-top:4px;">
-      <summary style="${thirdPartySummaryStyle}">Third-party (${thirdParty.length})</summary>
+      <summary style="cursor:pointer;font-weight:bold;color:#111827;">Third-party (${thirdParty.length})</summary>
+      ${hasNoSubsections ? "<p style='margin:4px 0;color:#888'>None</p>" : ""}
+      ${trackersSubsection}
+      ${unlabeledSubsection}
       ${securitySubsection}
-      ${trackerList}
     </details>
     <details${firstPartyOpen} style="margin-top:4px;">
       <summary style="cursor:pointer;font-weight:bold;color:#059669;">First-party (${firstParty.length})</summary>
@@ -278,6 +288,11 @@ function cookieListHtml(cookies: CookieInfo[]): string {
       const partyLabel = c.isThirdParty
         ? (c.isSecurityCookie ? "🟡 Security" : "🔴 3rd party")
         : "🟢 1st party";
+      const trackerLabel = c.trackerCategory !== null
+        ? `<div style="margin-top:4px;">
+             <span style="background:#ffedd5;border:1px solid #fed7aa;color:#9a3412;padding:2px 6px;border-radius:12px;font-size:0.75rem;">${escapeHtml(c.trackerCategory)}</span>
+           </div>`
+        : "";
       return `
       <div style="${borderStyle}border-radius:4px;padding:6px 8px;margin:4px 0;font-size:0.8rem;">
         ${nameAndDomain}
@@ -290,6 +305,7 @@ function cookieListHtml(cookies: CookieInfo[]): string {
         <span>SameSite: ${escapeHtml(c.sameSite)}</span>
         &nbsp;|&nbsp;
         <span>${partyLabel}</span>
+        ${trackerLabel}
         <br/>
         <div style="display:flex;align-items:baseline;gap:4px;margin-top:2px;">
           <span style="color:#555;flex-shrink:0;">Value:</span>
