@@ -11,6 +11,7 @@ import {
   recordThirdPartyOrigin,
   clearThirdPartyOrigins,
   isThirdPartyRequest,
+  getThirdPartyOrigins,
 } from "../features/cookies/thirdPartyDomains";
 import type {
   GetCookiesMessage,
@@ -158,8 +159,22 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
     reqs.push({ ...req, count: 1 });
     tabPostRequests.set(tabId, reqs);
   }
-  // Persist so data survives service worker restarts within the browser session
-  chrome.storage.session.set({ [`requests_${tabId}`]: reqs }).catch(() => {});
+  // Merge-write: read persisted state before writing so a new request that fires
+  // immediately after a SW restart doesn't clobber data from the previous session.
+  // All concurrent calls capture tabPostRequests at callback time (the latest
+  // in-memory state), so they converge on the same merged result — idempotent writes
+  const storageKey = `requests_${tabId}`;
+  chrome.storage.session.get(storageKey)
+    .then((stored) => {
+      const persisted: PostRequestInfo[] = ((stored as Record<string, unknown>)[storageKey] as PostRequestInfo[]) ?? [];
+      const current = tabPostRequests.get(tabId) ?? [];
+      const mergedMap = new Map(persisted.map((r): [string, PostRequestInfo] => [r.domain, r]));
+      for (const r of current) {
+        mergedMap.set(r.domain, r);
+      }
+      chrome.storage.session.set({ [storageKey]: [...mergedMap.values()] }).catch(() => {});
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +535,36 @@ async function setPiiBadge(tabId: number): Promise<void> {
   }
 }
 
+// Writes all in-memory third-party origins for a tab to session storage so they
+// survive a service worker restart. Called from the debounced badge update so a
+// single batch write replaces what would otherwise be many concurrent read-modify-write
+// races if we persisted each origin individually as it arrived
+function persistOriginsForTab(tabId: number, pageUrl: string): void {
+  const origins = getThirdPartyOrigins(tabId);
+  if (origins.length === 0) {
+    return;
+  }
+  try {
+    const pageDomain = getDomain(new URL(pageUrl).hostname);
+    if (!pageDomain) {
+      return;
+    }
+    const storageKey = `origins_domain_${pageDomain}`;
+    chrome.storage.session.get(storageKey)
+      .then((stored) => {
+        const existing = new Set(((stored as Record<string, unknown>)[storageKey] as string[]) ?? []);
+        for (const o of origins) {
+          existing.add(o);
+        }
+        chrome.storage.session.set({ [storageKey]: [...existing] }).catch(() => {});
+      })
+      .catch(() => {});
+  }
+  catch {
+    // ignore unparseable URL
+  }
+}
+
 function scheduleBadgeUpdate(tabId: number): void {
   const existing = badgeUpdateTimers.get(tabId);
   if (existing !== undefined) {
@@ -532,6 +577,7 @@ function scheduleBadgeUpdate(tabId: number): void {
       if (chrome.runtime.lastError || !tab.url) {
         return;
       }
+      persistOriginsForTab(tabId, tab.url);
       queryCookiesWithThirdParty(tab.url, tabId)
         .then((result) => {
           const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie && c.trackerCategory !== null && !HARMLESS_TRACKER_CATEGORIES.has(c.trackerCategory)).length;
@@ -557,10 +603,12 @@ export default defineBackground(() => {
       }
       const stored = await chrome.storage.session.get([
         `alerts_${tab.id}`,
+        `requests_${tab.id}`,
         `seenCategories_${tab.id}`,
         `alertsViewed_${tab.id}`,
       ]).catch(() => ({}));
       const alerts = ((stored as Record<string, unknown>)[`alerts_${tab.id}`] as AlertInfo[]) || [];
+      const requests = ((stored as Record<string, unknown>)[`requests_${tab.id}`] as PostRequestInfo[]) || [];
       const seenCategories = ((stored as Record<string, unknown>)[`seenCategories_${tab.id}`] as string[]) || [];
       const alertsViewed = ((stored as Record<string, unknown>)[`alertsViewed_${tab.id}`] as boolean) || false;
       if (alerts.length > 0) {
@@ -569,6 +617,9 @@ export default defineBackground(() => {
         if (hasPii) {
           tabBadgeState.set(tab.id, "pii");
         }
+      }
+      if (requests.length > 0) {
+        tabPostRequests.set(tab.id, requests);
       }
       if (seenCategories.length > 0) {
         tabSeenPiiCategories.set(tab.id, new Set(seenCategories));

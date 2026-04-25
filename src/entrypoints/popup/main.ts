@@ -291,7 +291,7 @@ function cookieListHtml(cookies: CookieInfo[]): string {
       // Harmless categories use a yellow pill; all other tracker categories use the standard orange
       const harmlessCategories = new Set(["Anti-fraud", "ConsentManagers"]);
       const isHarmlessCategory = c.trackerCategory !== null && harmlessCategories.has(c.trackerCategory);
-      const trackerLabel = c.trackerCategory !== null
+      const trackerLabel = c.isThirdParty && c.trackerCategory !== null
         ? `<div style="margin-top:4px;">
              <span style="${isHarmlessCategory ? "background:#fefce8;border:1px solid #fde047;color:#854d0e;" : "background:#ffedd5;border:1px solid #fed7aa;color:#9a3412;"}padding:2px 6px;border-radius:12px;font-size:0.75rem;">${escapeHtml(c.trackerCategory)}</span>
            </div>`

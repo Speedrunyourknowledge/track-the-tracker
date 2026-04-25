@@ -125,10 +125,20 @@ export async function queryCookiesWithThirdParty(
     isThirdParty: false,
   }));
 
-  // Third-party cookies — one getAll call per observed third-party origin
+  // Third-party cookies — one getAll call per observed third-party origin.
+  // Merges current-navigation origins (in-memory) with origins persisted from
+  // previous visits to this site, so cached second-visits still see all cookies
   const origins = getThirdPartyOrigins(tabId);
+  const pageRegisteredDomain = getDomain(new URL(pageUrl).hostname);
+  let persistedOrigins: string[] = [];
+  if (pageRegisteredDomain) {
+    const storageKey = `origins_domain_${pageRegisteredDomain}`;
+    const stored = await chrome.storage.session.get(storageKey).catch(() => ({}));
+    persistedOrigins = ((stored as Record<string, unknown>)[storageKey] as string[]) ?? [];
+  }
+  const allOrigins = [...new Set([...origins, ...persistedOrigins])];
   const thirdPartyResults = await Promise.all(
-    origins.map(async (origin) => {
+    allOrigins.map(async (origin) => {
       const { cookies: raw, timedOut } = await getAllWithTimeout({ url: origin });
       return {
         cookies: raw.map((c): CookieInfo => ({
