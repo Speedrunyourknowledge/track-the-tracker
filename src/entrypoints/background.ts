@@ -53,6 +53,11 @@ const badgeUpdateTimers = new Map<number, ReturnType<typeof setTimeout>>();
 // triggered an orange badge per tab so the badge only re-shows for genuinely new categories
 const tabSeenPiiCategories = new Map<number, Set<string>>();
 
+// Tracks the URL of the page currently loaded in each tab.
+// Used to filter out requests that are first-party relative to the page even when
+// details.initiator points to a different subdomain (e.g. a cross-origin iframe)
+const tabPageUrls = new Map<number, string>();
+
 // Maximum top-level keys stored from a JSON payload for display in the popup
 const PAYLOAD_PREVIEW_MAX_KEYS = 30;
 // Maximum characters stored for non-JSON payloads
@@ -79,6 +84,7 @@ function clearTabData(tabId: number): void {
   tabBadgeState.delete(tabId);  // reset so fresh indicator can appear on next page
   tabAlertsViewed.delete(tabId);
   tabSeenPiiCategories.delete(tabId);
+  tabPageUrls.delete(tabId);
   // Cancel any pending cookie-badge debounce so it doesn't fire on the new page
   const timer = badgeUpdateTimers.get(tabId);
   if (timer !== undefined) {
@@ -627,6 +633,9 @@ export default defineBackground(() => {
       if (alertsViewed) {
         tabAlertsViewed.add(tab.id);
       }
+      if (tab.url) {
+        tabPageUrls.set(tab.id, tab.url);
+      }
     }
   })();
 
@@ -660,9 +669,11 @@ export default defineBackground(() => {
         return;
       }
 
-      // Only analyze third-party requests — first-party POST requests (e.g.
-      // submitting a form to your own site) are not a privacy concern
-      if (!details.initiator || !isThirdPartyRequest(details.url, details.initiator)) {
+      // Only analyze third-party requests. Use the stored page URL as the source of
+      // truth (mirrors isThirdPartyCookieDomain). Skip if no page URL is known yet
+      // rather than falling back to details.initiator, which can produce false positives
+      const pageUrl = tabPageUrls.get(details.tabId);
+      if (!pageUrl || !isThirdPartyRequest(details.url, pageUrl)) {
         return;
       }
 
@@ -854,12 +865,13 @@ export default defineBackground(() => {
     (details) => {
       pendingPayloads.delete(details.requestId);
 
-      if (details.tabId < 0 || !details.initiator) {
+      if (details.tabId < 0) {
         return;
       }
 
       try {
-        if (isThirdPartyRequest(details.url, details.initiator)) {
+        const pageUrl = tabPageUrls.get(details.tabId);
+        if (pageUrl && isThirdPartyRequest(details.url, pageUrl)) {
           const requestOrigin = new URL(details.url).origin;
           const isNew = recordThirdPartyOrigin(details.tabId, requestOrigin);
           if (isNew) {
@@ -895,12 +907,22 @@ export default defineBackground(() => {
     if (changeInfo.status === "loading") {
       clearTabData(tabId);
       clearThirdPartyOrigins(tabId);
+      // Record the new URL immediately so webRequest handlers can compare against it
+      // before the page finishes loading (clearTabData deleted the previous entry above)
+      if (tab.url) {
+        tabPageUrls.set(tabId, tab.url);
+      }
       chrome.action.setBadgeText({ text: "", tabId }).catch(() => { /* tab may be closing */ });
       return;
     }
 
     if (changeInfo.status !== "complete") {
       return;
+    }
+
+    // Update with the final URL in case it changed during load (e.g. after a redirect)
+    if (tab.url) {
+      tabPageUrls.set(tabId, tab.url);
     }
 
     queryCookiesWithThirdParty(tab.url, tabId)
