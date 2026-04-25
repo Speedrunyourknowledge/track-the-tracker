@@ -159,8 +159,22 @@ function addPostRequest(tabId: number, req: Omit<PostRequestInfo, "count">): voi
     reqs.push({ ...req, count: 1 });
     tabPostRequests.set(tabId, reqs);
   }
-  // Persist so data survives service worker restarts within the browser session
-  chrome.storage.session.set({ [`requests_${tabId}`]: reqs }).catch(() => {});
+  // Merge-write: read persisted state before writing so a new request that fires
+  // immediately after a SW restart doesn't clobber data from the previous session.
+  // All concurrent calls capture tabPostRequests at callback time (the latest
+  // in-memory state), so they converge on the same merged result — idempotent writes
+  const storageKey = `requests_${tabId}`;
+  chrome.storage.session.get(storageKey)
+    .then((stored) => {
+      const persisted: PostRequestInfo[] = ((stored as Record<string, unknown>)[storageKey] as PostRequestInfo[]) ?? [];
+      const current = tabPostRequests.get(tabId) ?? [];
+      const mergedMap = new Map(persisted.map((r): [string, PostRequestInfo] => [r.domain, r]));
+      for (const r of current) {
+        mergedMap.set(r.domain, r);
+      }
+      chrome.storage.session.set({ [storageKey]: [...mergedMap.values()] }).catch(() => {});
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -589,10 +603,12 @@ export default defineBackground(() => {
       }
       const stored = await chrome.storage.session.get([
         `alerts_${tab.id}`,
+        `requests_${tab.id}`,
         `seenCategories_${tab.id}`,
         `alertsViewed_${tab.id}`,
       ]).catch(() => ({}));
       const alerts = ((stored as Record<string, unknown>)[`alerts_${tab.id}`] as AlertInfo[]) || [];
+      const requests = ((stored as Record<string, unknown>)[`requests_${tab.id}`] as PostRequestInfo[]) || [];
       const seenCategories = ((stored as Record<string, unknown>)[`seenCategories_${tab.id}`] as string[]) || [];
       const alertsViewed = ((stored as Record<string, unknown>)[`alertsViewed_${tab.id}`] as boolean) || false;
       if (alerts.length > 0) {
@@ -601,6 +617,9 @@ export default defineBackground(() => {
         if (hasPii) {
           tabBadgeState.set(tab.id, "pii");
         }
+      }
+      if (requests.length > 0) {
+        tabPostRequests.set(tab.id, requests);
       }
       if (seenCategories.length > 0) {
         tabSeenPiiCategories.set(tab.id, new Set(seenCategories));
