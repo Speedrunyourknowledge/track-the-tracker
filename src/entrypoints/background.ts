@@ -763,7 +763,7 @@ export default defineBackground(() => {
           }
         }
         addAlert(details.tabId, {
-          id: details.requestId + "-location",
+          id: domain + "-location",
           type: "location_tracking",
           url: details.url,
           domain,
@@ -796,7 +796,7 @@ export default defineBackground(() => {
         }
 
         addAlert(details.tabId, {
-          id: details.requestId + "-pii",
+          id: domain + "-pii",
           type: "pii_exfiltration",
           url: details.url,
           domain,
@@ -830,7 +830,7 @@ export default defineBackground(() => {
 
         if (actionLabels.length > 0) {
           addAlert(details.tabId, {
-            id: details.requestId + "-action",
+            id: domain + "-action",
             type: "action_tracking",
             url: details.url,
             domain,
