@@ -11,6 +11,7 @@ import {
   recordThirdPartyOrigin,
   clearThirdPartyOrigins,
   isThirdPartyRequest,
+  getThirdPartyOrigins,
 } from "../features/cookies/thirdPartyDomains";
 import type {
   GetCookiesMessage,
@@ -520,6 +521,36 @@ async function setPiiBadge(tabId: number): Promise<void> {
   }
 }
 
+// Writes all in-memory third-party origins for a tab to session storage so they
+// survive a service worker restart. Called from the debounced badge update so a
+// single batch write replaces what would otherwise be many concurrent read-modify-write
+// races if we persisted each origin individually as it arrived
+function persistOriginsForTab(tabId: number, pageUrl: string): void {
+  const origins = getThirdPartyOrigins(tabId);
+  if (origins.length === 0) {
+    return;
+  }
+  try {
+    const pageDomain = getDomain(new URL(pageUrl).hostname);
+    if (!pageDomain) {
+      return;
+    }
+    const storageKey = `origins_domain_${pageDomain}`;
+    chrome.storage.session.get(storageKey)
+      .then((stored) => {
+        const existing = new Set(((stored as Record<string, unknown>)[storageKey] as string[]) ?? []);
+        for (const o of origins) {
+          existing.add(o);
+        }
+        chrome.storage.session.set({ [storageKey]: [...existing] }).catch(() => {});
+      })
+      .catch(() => {});
+  }
+  catch {
+    // ignore unparseable URL
+  }
+}
+
 function scheduleBadgeUpdate(tabId: number): void {
   const existing = badgeUpdateTimers.get(tabId);
   if (existing !== undefined) {
@@ -532,6 +563,7 @@ function scheduleBadgeUpdate(tabId: number): void {
       if (chrome.runtime.lastError || !tab.url) {
         return;
       }
+      persistOriginsForTab(tabId, tab.url);
       queryCookiesWithThirdParty(tab.url, tabId)
         .then((result) => {
           const count = result.cookies.filter((c) => c.isThirdParty && !c.isSecurityCookie && c.trackerCategory !== null && !HARMLESS_TRACKER_CATEGORIES.has(c.trackerCategory)).length;
