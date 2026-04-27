@@ -110,7 +110,7 @@ By installing the extension, you can use it during normal browsing.
 
 #### Option A — Download the pre-built zip
 
-1. Download the `.zip` from the [latest GitHub Release](releases/latest) and extract it
+1. Download the `chrome.zip` from the [latest GitHub Release](https://github.com/Speedrunyourknowledge/track-the-tracker/releases/latest) and extract it
 2. Open Chrome and go to `chrome://extensions`
 3. Enable **Developer mode** (toggle in the top-right corner)
 4. Click **Load unpacked** and select the folder extracted from the zip
