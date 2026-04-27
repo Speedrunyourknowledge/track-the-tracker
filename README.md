@@ -4,7 +4,7 @@ A Chrome extension that reveals cross-site tracking activity as you browse. It i
 
 ## Motivation
 
-Most users unknowingly authorize cross-site tracking by clicking "Accept All" on cookie banners. The result is an **Illusion of Privacy**: personal data is routinely collected and sold without transparent user consent. This extension acts as an **Auditor** — not an ad-blocker — revealing tracking activity in real time.
+Internet users routinely authorize cross-site tracking by clicking "Accept All" on cookie consent banners, often without realizing what they are agreeing to. The result is an **illusion of privacy**: personal data is routinely collected and sold without transparent user consent. This extension acts as an **Auditor**, not an ad-blocker, revealing tracking activity in real time.
 
 ### Core Privacy Problems
 
@@ -13,37 +13,38 @@ Most users unknowingly authorize cross-site tracking by clicking "Accept All" on
 
 ## Features
 
-[Screenshots will go here]
-
 ### Cookies tab
 
-The cookies tab shows all cookies currently active for the page. Third-party cookies are checked against the [disconnect.me tracker list](https://github.com/disconnectme/disconnect-tracking-protection) — a public, well-maintained database of domains that collect data about users across multiple websites they don't own. Cookies whose domain matches an entry in that list are classified as trackers.
+The cookies tab shows all cookies currently active for the page. Third-party cookies are checked against the Disconnect.me [tracker list](https://github.com/disconnectme/disconnect-tracking-protection), an actively-maintained list of known tracking domains. Cookies whose domain appears in this list are classified as trackers.
+> A tracking domain is one which collects user data from multiple websites not owned by the domain itself
+<br>
 
-Cookies are ordered from most invasive to least invasive:
+Example of Cookie Detection and Classification
+<img width="336" height="485" alt="cookies-tab" src="https://github.com/user-attachments/assets/527bdb97-d5d7-48df-bc2c-992507b3a5f4" />
 
-```
-▼ Third-party (N)
-    ▼ Trackers (N)          — confirmed by disconnect.me
-    ▶ Unlabeled (N)         — third-party but not in the tracker list
-    ▶ Security (Harmless)   — known anti-abuse cookies
+Third-Party Cookie Subtypes
+- **Trackers** — belong to a known tracking domain
+- **Unlabeled** — could not be classified
+- **Security (Harmless)** — used for anti-abuse (i.e., preventing cyberattacks like spamming or botting)
 
-▶ First-party (N)   — cookies from the current site
-```
-
-Each tracking cookie displays a category that indicates its overall purpose. You can view the full list of categories and their descriptions [here](https://disconnect.me/trackerprotection#categories_of_trackers). Two categories are treated as harmless despite appearing in the tracker list and are displayed with a yellow label instead of orange:
+Each tracking cookie displays a category that indicates its overall purpose. You can view the full list of categories and their descriptions [here](https://disconnect.me/trackerprotection#categories_of_trackers). Two categories are treated as harmless and are displayed with a yellow label instead of orange:
 
 - **Anti-fraud** — used by services that detect and prevent online fraud
 - **ConsentManagers** — used to manage cookie consent preferences
 
-Security cookies are used for website security (e.g., bot prevention), not tracking.
+Examples of Tracking Cookies
+<img width="337" height="538" alt="cookies-tracking" src="https://github.com/user-attachments/assets/9e93a44a-ea6d-4646-88fa-42e970422c8b" />
 
 ### Requests tab
 
 Shows third-party POST requests observed during the current page load, with field-level highlights for any PII or action-tracking data found in the payload. Alerts are grouped into three categories:
 
-- **PII Exfiltration** — email addresses, phone numbers, or tracker-specific hashed identity fields (Facebook CAPI, Google Analytics enhanced conversions, TikTok Events API, and others)
-- **Location Tracking** — latitude/longitude, GPS coordinates, or address fields (country, city, zip, etc.)
+- **PII Exfiltration** — email addresses, phone numbers, or tracker-specific hashed identity fields (e.g., Facebook CAPI, Google Analytics enhanced conversions, TikTok Events API)
+- **Location Tracking** — GPS coordinates or precise location fields (e.g., city, zip code)
 - **Action Tracking** — behavioral fields that describe what the user did: page visits, clicks, scroll position, video playback
+
+Examples of Privacy Alerts
+<img width="342" height="474" alt="tiktok-pii" src="https://github.com/user-attachments/assets/1404013c-3e84-4a87-9496-cdf97a51acdc" />
 
 ### Badge
 
@@ -52,12 +53,12 @@ The extension icon shows a `!` badge when tracking activity is detected on the a
   - Cookies in "harmless" categories do not trigger this badge
 - **Orange** — a POST request containing PII or location data was sent to a third-party domain
 
-The badge is cleared when the user opens the relevant tab in the popup.
+The badge is cleared when the user opens the popup tab that triggered the badge notification.
 
 **Badge update behavior:**
-- The yellow badge fires **once per page load**. After it has been set, additional third-party cookie detections for the same page don't re-trigger it, preventing notification spam.
-- The orange badge fires **every time a new PII or location alert is detected**, and takes priority over the yellow badge.
-- Both states reset on navigation, so each new page load starts fresh.
+- The yellow badge fires **once per page load**. After it has been set, additional third-party cookie detections for the same page don't re-trigger it, preventing notification spam
+- The orange badge fires **the first time a PII or location alert is detected** and takes priority over the yellow badge
+- Both states reset on page navigation
 
 ## Project Structure
 
