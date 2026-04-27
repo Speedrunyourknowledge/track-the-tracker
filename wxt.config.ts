@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     name: "Track the Tracker",
     description: "Detects third-party cookies and tracking on websites you visit.",
-    version: "0.1.0",
+    version: "1.0.0",
     permissions: ["cookies", "webRequest", "storage", "tabs"],
     host_permissions: ["<all_urls>"],
   },
