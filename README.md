@@ -15,7 +15,7 @@ Internet users routinely authorize cross-site tracking by clicking "Accept All" 
 
 ### Cookies tab
 
-The cookies tab shows all cookies currently active for the page. Third-party cookies are checked against the Disconnect.me [tracker list](https://github.com/disconnectme/disconnect-tracking-protection), an actively-maintained list of known tracking domains. Cookies whose domain appears in this list are classified as trackers.
+Shows all cookies associated with the current webpage. Third-party cookies are checked against the Disconnect.me [tracker list](https://github.com/disconnectme/disconnect-tracking-protection), an actively-maintained list of known tracking domains. Cookies whose domain appears in this list are classified as trackers.
 > A tracking domain is one which collects user data from multiple websites not owned by the domain itself
 <br>
 
@@ -37,7 +37,7 @@ Examples of Tracking Cookies
 
 ### Requests tab
 
-Shows third-party POST requests observed during the current page load, with field-level highlights for any PII or action-tracking data found in the payload. Alerts are grouped into three categories:
+Shows all third-party POST requests sent from the current webpage, with field-level highlights for any PII or action-tracking data found in the payload. Alerts are grouped into three categories:
 
 - **PII Exfiltration** — email addresses, phone numbers, or tracker-specific hashed identity fields (e.g., Facebook CAPI, Google Analytics enhanced conversions, TikTok Events API)
 - **Location Tracking** — GPS coordinates or precise location fields (e.g., city, zip code)
