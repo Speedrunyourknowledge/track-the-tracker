@@ -139,7 +139,7 @@ Both options produce an identical install.
 
 ### Pin the extension
 
-Click the puzzle-piece icon in the toolbar, then pin **Track the Tracker**
+Click the puzzle-piece icon in the Chrome toolbar, then pin **Track the Tracker**.
 
 ### Scripts
 
